@@ -150,6 +150,26 @@ final class Collector: @unchecked Sendable {
     var statuses: [(Date, SessionStatus)] = []
     var notices: [SessionNotice] = []
     var printed: Set<PhraseID> = []
+
+    // Ordering and stability, checked as events arrive.
+    var newestID: PhraseID?
+    var outOfOrder = 0
+    var changedAfterSettling = 0
+    var reopened = 0
+
+    func check(_ phrase: Phrase) {
+        guard let previous = phrases[phrase.id] else {
+            if let newestID, phrase.id < newestID { outOfOrder += 1 }
+            newestID = phrase.id
+            return
+        }
+        if previous.isSettled, (previous.sourceText, previous.translation) != (phrase.sourceText, phrase.translation) {
+            changedAfterSettling += 1
+        }
+        if previous.sourceState != .provisional, phrase.sourceState == .provisional {
+            reopened += 1
+        }
+    }
 }
 
 let collector = Collector()
@@ -169,6 +189,7 @@ let consumer = Task {
             collector.notices.append(notice)
             print("  ! notice: \(notice)")
         case .phrase(let phrase):
+            collector.check(phrase)
             collector.phrases[phrase.id] = phrase
             if phrase.isSettled, collector.printed.insert(phrase.id).inserted {
                 let latency = phrase.timing.translationLatency.map { String(format: "%4.0f ms", $0 * 1000) } ?? "      –"
@@ -309,6 +330,8 @@ let fullTranslation = translated.compactMap(\.timing.translationLatency)
 let speechToCaption = results.compactMap(\.speechEndToCaptionSeconds)
 let unavailable = phrases.filter { if case .unavailable = $0.translation { true } else { false } }
 let reconnects = collector.statuses.filter { $0.1 == .reconnecting }.count
+let unsettled = phrases.filter { !$0.isSettled }.count
+let integrityProblems = collector.outOfOrder + collector.changedAfterSettling + collector.reopened + unsettled
 let usage = translator.usage
 let audioSeconds = audio.audioSeconds
 let sttCost = audioSeconds / 3600 * options.sttPricePerHour
@@ -332,6 +355,7 @@ print("Final transcript → first English text: p50 \(ms(percentile(firstText, 0
 print("Final transcript → complete English:   p50 \(ms(percentile(fullTranslation, 0.5))), p95 \(ms(percentile(fullTranslation, 0.95)))")
 print("End of speech → complete English:      p50 \(ms(percentile(speechToCaption, 0.5))), p95 \(ms(percentile(speechToCaption, 0.95)))")
 print("Reconnects: \(reconnects), notices: \(collector.notices.isEmpty ? "none" : collector.notices.map { "\($0)" }.joined(separator: ", "))")
+print("Integrity: \(integrityProblems == 0 ? "ok" : "PROBLEMS") — new phrases out of order \(collector.outOfOrder), changed after settling \(collector.changedAfterSettling), final reopened \(collector.reopened), unsettled after Stop \(unsettled)")
 print(String(format: "Audio streamed: %.0fs; session wall time: %.0fs", audioSeconds, elapsed))
 print("Translation requests: \(usage.requests), tokens in/out: \(usage.prompt)/\(usage.completion), models: \(usage.models.map { "\($0.key) ×\($0.value)" }.sorted().joined(separator: ", "))")
 print(String(format: "Estimated cost: STT $%.4f + LLM $%.4f = $%.4f (≈ $%.3f per hour of streaming)", sttCost, llmCost, sttCost + llmCost, audioSeconds > 0 ? (sttCost + llmCost) / audioSeconds * 3600 : 0))
@@ -348,6 +372,7 @@ if let reportURL = options.report {
         let speechToCaptionP50: Double?
         let speechToCaptionP95: Double?
         let reconnects: Int
+        let integrityProblems: Int
         let audioSeconds: Double
         let promptTokens: Int
         let completionTokens: Int
@@ -359,7 +384,7 @@ if let reportURL = options.report {
         firstTextLatencyP50: percentile(firstText, 0.5),
         translationLatencyP50: percentile(fullTranslation, 0.5), translationLatencyP95: percentile(fullTranslation, 0.95),
         speechToCaptionP50: percentile(speechToCaption, 0.5), speechToCaptionP95: percentile(speechToCaption, 0.95),
-        reconnects: reconnects, audioSeconds: audioSeconds,
+        reconnects: reconnects, integrityProblems: integrityProblems, audioSeconds: audioSeconds,
         promptTokens: usage.prompt, completionTokens: usage.completion,
         estimatedCostUSD: sttCost + llmCost, memoryMegabytes: memorySamples.map(\.1)
     )
@@ -369,3 +394,6 @@ if let reportURL = options.report {
     try encoder.encode(report).write(to: reportURL)
     print("Report written to \(reportURL.path)")
 }
+
+// Fail the run for scripts when phrases arrived out of order or unsettled.
+if integrityProblems > 0 { exit(1) }
