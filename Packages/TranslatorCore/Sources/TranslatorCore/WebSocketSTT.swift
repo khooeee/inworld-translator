@@ -16,9 +16,9 @@ public struct WebSocketSTTConnector: STTConnecting {
     ) async throws -> any STTConnection {
         let config = try STTWire.configMessage(modelID: credential.modelID, configuration: configuration)
 
-        // The token goes in a header, never in the URL, where it would be logged.
+        // The key goes in a header, never in the URL, where it would be logged.
         var request = URLRequest(url: credential.websocketURL)
-        request.setValue("Bearer \(credential.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(credential.authorization, forHTTPHeaderField: "Authorization")
         let task = session.webSocketTask(with: request)
         task.resume()
 

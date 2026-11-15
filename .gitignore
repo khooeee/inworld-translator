@@ -1,7 +1,6 @@
 # Secrets and local configuration
 .env
 .env.*
-!.env.example
 App/Config/Local.xcconfig
 
 # Xcode / SwiftPM
@@ -17,7 +16,7 @@ node_modules/
 npm-debug.log*
 
 # Generated validation artifacts
-backend/tools/samples/
-backend/tools/reports/
+tools/samples/out/
+tools/reports/
 
 .DS_Store

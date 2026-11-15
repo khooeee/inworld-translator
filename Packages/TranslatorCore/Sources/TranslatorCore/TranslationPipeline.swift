@@ -31,7 +31,7 @@ public actor TranslationPipeline {
             /// All of the translated text received so far.
             case partial(String)
             case completed(String, language: String?)
-            case unavailable(TranslationUnavailableReason, error: BackendError?)
+            case unavailable(TranslationUnavailableReason, error: ServiceError?)
         }
 
         public let id: PhraseID
@@ -186,12 +186,14 @@ public actor TranslationPipeline {
                         case .delta(let delta):
                             text += delta
                             progress(.partial(text))
+                        case .usage:
+                            break
                         case .completed(let translation, let finalLanguage):
                             return (translation, finalLanguage ?? language)
                         }
                     }
                     try Task.checkCancellation()
-                    throw BackendError.invalidResponse
+                    throw ServiceError.invalidResponse
                 }
                 let trimmed = translation.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty {
@@ -200,17 +202,17 @@ public actor TranslationPipeline {
                 return .completed(trimmed, language: language)
             } catch {
                 if Task.isCancelled { return .unavailable(.cancelled, error: nil) }
-                let backendError = error as? BackendError
-                switch backendError {
+                let serviceError = error as? ServiceError
+                switch serviceError {
                 case .rateLimited, .quotaExceeded:
-                    return .unavailable(.limitReached, error: backendError)
+                    return .unavailable(.limitReached, error: serviceError)
                 case .some(let failure) where failure.isTransient && attempt < configuration.maxAttempts:
                     attempt += 1
                     try? await Task.sleep(for: configuration.retryDelay)
                     if Task.isCancelled { return .unavailable(.cancelled, error: nil) }
                 default:
                     // Includes timeouts: by then the phrase is stale, so do not retry.
-                    return .unavailable(.failed, error: backendError)
+                    return .unavailable(.failed, error: serviceError)
                 }
             }
         }

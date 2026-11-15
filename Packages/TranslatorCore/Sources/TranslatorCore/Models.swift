@@ -26,7 +26,7 @@ public enum TranslationUnavailableReason: Sendable, Equatable {
     case cancelled
     /// Nothing translatable was recognized in the audio.
     case unintelligible
-    /// The backend refused the request because a usage limit was reached.
+    /// Inworld refused the request because a usage limit was reached.
     case limitReached
 }
 
@@ -149,7 +149,9 @@ public enum SessionStatus: Sendable, Equatable {
 public enum SessionNotice: Sendable, Equatable {
     case microphoneDenied
     case microphoneUnavailable
+    /// No API key has been saved.
     case notConfigured
+    /// Inworld rejected the API key.
     case unauthorized
     case usageLimitReached(retryAfter: TimeInterval?)
     case connectionFailed

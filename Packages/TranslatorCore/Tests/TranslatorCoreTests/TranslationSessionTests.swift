@@ -207,14 +207,14 @@ struct TranslationSessionTests {
         let harness = SessionHarness()
         let connection = try await harness.startListening()
         connection.final("hola")
-        try await harness.translator.call(0).fail(BackendError.server(status: 502))
+        try await harness.translator.call(0).fail(ServiceError.server(status: 502))
         try await harness.translator.call(1).reply("hello")
         try await harness.waitForPhrases("retried") { $0.first?.english == "hello" }
         #expect(harness.translator.requests.map(\.text) == ["hola", "hola"])
 
         connection.final("adiós")
-        try await harness.translator.call(2).fail(BackendError.transport)
-        try await harness.translator.call(3).fail(BackendError.transport)
+        try await harness.translator.call(2).fail(ServiceError.transport)
+        try await harness.translator.call(3).fail(ServiceError.transport)
         try await harness.waitForPhrases("failed") { $0.last?.translation == .unavailable(.failed) }
         #expect(harness.translator.calls.count == 4)
         await harness.session.stop()
@@ -251,9 +251,9 @@ struct TranslationSessionTests {
         let harness = SessionHarness()
         let connection = try await harness.startListening()
         connection.final("uno")
-        try await harness.translator.call(0).fail(BackendError.rateLimited(retryAfter: 30))
+        try await harness.translator.call(0).fail(ServiceError.rateLimited(retryAfter: 30))
         connection.final("dos")
-        try await harness.translator.call(1).fail(BackendError.quotaExceeded(retryAfter: 3600))
+        try await harness.translator.call(1).fail(ServiceError.quotaExceeded)
         try await harness.waitForPhrases("limited") { $0.count == 2 && $0.allSatisfy { $0.translation == .unavailable(.limitReached) } }
         #expect(harness.notices == [.translationLimited])
         #expect(harness.status == .listening)
@@ -405,8 +405,8 @@ struct TranslationSessionTests {
         try await harness.waitForPhrases("second phrase") { $0.count == 2 && $0[1].english == "EN tutti" }
         #expect(!harness.phrases.contains { $0.sourceText == "should not appear" })
 
-        #expect(harness.credentials.issued.map(\.accessToken) == ["token-0", "token-1"])
-        #expect(second.credential.accessToken == "token-1", "single-use tokens are never reused")
+        #expect(harness.credentials.issued.count == 2, "the key is read again for every connection")
+        #expect(second.credential.authorization == "Basic key-1")
         #expect(harness.statuses.contains(.reconnecting))
         await harness.session.stop()
     }
@@ -452,7 +452,7 @@ struct TranslationSessionTests {
     @Test("a credential failure is retried, then the connection succeeds")
     func credentialRetry() async throws {
         let harness = SessionHarness()
-        harness.credentials.failNext(BackendError.transport, BackendError.server(status: 502))
+        harness.credentials.failNext(ServiceError.transport, ServiceError.server(status: 502))
         await harness.session.start()
         _ = try await harness.stt.connection(0)
         try await harness.waitForStatus(.listening)
@@ -460,15 +460,26 @@ struct TranslationSessionTests {
         await harness.session.stop()
     }
 
-    @Test("an authentication rejection from the service gets a fresh credential")
+    @Test("an authentication rejection from the service stops instead of retrying the same key")
     func serviceAuthRejection() async throws {
         let harness = SessionHarness()
         let first = try await harness.startListening()
-        first.fail(STTServiceError(code: 16, message: "The session token is invalid or has expired."))
-        let second = try await harness.stt.connection(1)
-        try await harness.waitForStatus(.listening)
-        #expect(second.credential.accessToken == "token-1")
-        await harness.session.stop()
+        first.fail(STTServiceError(code: 16, message: "authentication is required"))
+        try await harness.waitForStatus(.idle)
+        #expect(harness.notices == [.unauthorized])
+        #expect(harness.stt.count == 1)
+        #expect(!harness.audio.isCapturing)
+    }
+
+    @Test("a missing API key stops before connecting")
+    func notConfigured() async throws {
+        let harness = SessionHarness()
+        harness.credentials.failNext(ServiceError.notConfigured)
+        await harness.session.start()
+        try await harness.waitForStatus(.idle)
+        #expect(harness.notices == [.notConfigured])
+        #expect(harness.stt.count == 0)
+        #expect(!harness.audio.isCapturing)
     }
 
     @Test("a rejected configuration stops instead of reconnecting forever")
@@ -482,10 +493,10 @@ struct TranslationSessionTests {
         #expect(!harness.audio.isCapturing)
     }
 
-    @Test("a revoked client key stops the session")
+    @Test("a rejected API key stops the session")
     func unauthorized() async throws {
         let harness = SessionHarness()
-        harness.credentials.failNext(BackendError.unauthorized)
+        harness.credentials.failNext(ServiceError.unauthorized)
         await harness.session.start()
         try await harness.waitForStatus(.idle)
         #expect(harness.notices == [.unauthorized])
@@ -495,16 +506,16 @@ struct TranslationSessionTests {
     @Test("a long rate limit or a daily quota stops with the retry time")
     func usageLimit() async throws {
         let harness = SessionHarness()
-        harness.credentials.failNext(BackendError.quotaExceeded(retryAfter: 3600))
+        harness.credentials.failNext(ServiceError.quotaExceeded)
         await harness.session.start()
         try await harness.waitForStatus(.idle)
-        #expect(harness.notices == [.usageLimitReached(retryAfter: 3600)])
+        #expect(harness.notices == [.usageLimitReached(retryAfter: nil)])
     }
 
     @Test("a short rate limit is waited out")
     func shortRateLimit() async throws {
         let harness = SessionHarness()
-        harness.credentials.failNext(BackendError.rateLimited(retryAfter: 0.05))
+        harness.credentials.failNext(ServiceError.rateLimited(retryAfter: 0.05))
         await harness.session.start()
         _ = try await harness.stt.connection(0)
         try await harness.waitForStatus(.listening)

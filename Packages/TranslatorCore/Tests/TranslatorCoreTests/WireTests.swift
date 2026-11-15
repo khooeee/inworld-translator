@@ -62,16 +62,6 @@ struct STTWireTests {
     }
 }
 
-@Suite("Backend client")
-struct BackendClientTests {
-    @Test("timestamps with and without fractional seconds parse")
-    func timestamps() {
-        #expect(BackendClient.parseTimestamp("2026-09-01T12:05:00Z") != nil)
-        #expect(BackendClient.parseTimestamp("2026-09-01T12:05:00.123Z") != nil)
-        #expect(BackendClient.parseTimestamp("yesterday") == nil)
-    }
-}
-
 @Suite("Helpers")
 struct HelperTests {
     @Test("speech detection ignores punctuation-only text")

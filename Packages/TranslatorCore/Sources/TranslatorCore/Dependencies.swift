@@ -54,16 +54,15 @@ public protocol AudioCapturing: Sendable {
 
 // MARK: - Speech to text
 
-/// A single-use credential for one STT connection.
+/// What is needed to open one STT connection.
 public struct STTCredential: Sendable, Equatable {
-    public let accessToken: String
-    public let expiresAt: Date
+    /// The value of the `Authorization` header.
+    public let authorization: String
     public let websocketURL: URL
     public let modelID: String
 
-    public init(accessToken: String, expiresAt: Date, websocketURL: URL, modelID: String) {
-        self.accessToken = accessToken
-        self.expiresAt = expiresAt
+    public init(authorization: String, websocketURL: URL, modelID: String) {
+        self.authorization = authorization
         self.websocketURL = websocketURL
         self.modelID = modelID
     }
@@ -137,16 +136,17 @@ public protocol STTConnecting: Sendable {
     func connect(credential: STTCredential, configuration: STTConfiguration) async throws -> any STTConnection
 }
 
-// MARK: - Backend
+// MARK: - Inworld API
 
-public enum BackendError: Error, Sendable, Equatable {
+public enum ServiceError: Error, Sendable, Equatable {
+    /// No API key has been saved yet.
     case notConfigured
-    /// The backend rejected the client key.
+    /// Inworld rejected the API key.
     case unauthorized
     /// A short-term rate limit; retry after the given delay.
     case rateLimited(retryAfter: TimeInterval?)
-    /// A daily quota; retrying soon will not help.
-    case quotaExceeded(retryAfter: TimeInterval?)
+    /// The account is out of credits; retrying soon will not help.
+    case quotaExceeded
     case server(status: Int)
     /// The request never completed: no network, timeout, connection lost.
     case transport
@@ -162,8 +162,8 @@ public enum BackendError: Error, Sendable, Equatable {
 }
 
 public protocol CredentialProviding: Sendable {
-    /// Returns a fresh credential. Credentials are single use, so this is
-    /// called before every connection attempt, including reconnects.
+    /// Called before every connection attempt, including reconnects, so a
+    /// changed API key takes effect on the next connection.
     func sttCredential() async throws -> STTCredential
 }
 
@@ -192,6 +192,8 @@ public enum TranslationUpdate: Sendable, Equatable {
     case language(String)
     /// More translated text; append it to what came before.
     case delta(String)
+    /// Tokens billed for the request, when the provider reports them.
+    case usage(promptTokens: Int, completionTokens: Int, model: String?)
     case completed(translation: String, language: String?)
 }
 

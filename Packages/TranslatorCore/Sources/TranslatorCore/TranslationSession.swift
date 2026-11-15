@@ -325,7 +325,7 @@ public actor TranslationSession: TranslationSessionControlling {
     }
 
     /// Keeps one STT connection open for the life of the run, reconnecting
-    /// with a fresh credential and exponential backoff when it drops.
+    /// with exponential backoff when it drops.
     private func superviseConnection(runID: Int) async {
         var attempt = 0
         while isCurrent(runID), !Task.isCancelled {
@@ -345,7 +345,6 @@ public actor TranslationSession: TranslationSessionControlling {
             var delay: Duration?
             do {
                 let credential = try await credentials.sttCredential()
-                guard credential.expiresAt > now() else { throw BackendError.invalidResponse }
                 let connection = try await connector.connect(credential: credential, configuration: configuration.stt)
                 guard isCurrent(runID), !Task.isCancelled, !suspended else {
                     connection.cancel()
@@ -369,9 +368,16 @@ public actor TranslationSession: TranslationSessionControlling {
                 await commitCurrentPhrase(as: .interrupted)
                 guard isCurrent(runID), !Task.isCancelled else { return }
 
-                if let serviceError = failure as? STTServiceError, serviceError.isInvalidArgument {
-                    beginStop(runID: runID, notice: .serviceRejectedRequest)
-                    return
+                // The same key and the same request would be rejected again.
+                if let serviceError = failure as? STTServiceError {
+                    if serviceError.isAuthentication {
+                        beginStop(runID: runID, notice: .unauthorized)
+                        return
+                    }
+                    if serviceError.isInvalidArgument {
+                        beginStop(runID: runID, notice: .serviceRejectedRequest)
+                        return
+                    }
                 }
                 if suspended || !networkAvailable { continue }
                 if now().timeIntervalSince(connectedAt) >= configuration.stableConnectionInterval.timeInterval {
@@ -401,14 +407,14 @@ public actor TranslationSession: TranslationSessionControlling {
     }
 
     private func classify(_ error: Error) -> ConnectFailure {
-        guard let backendError = error as? BackendError else { return .retry }
-        switch backendError {
+        guard let serviceError = error as? ServiceError else { return .retry }
+        switch serviceError {
         case .unauthorized:
             return .stop(.unauthorized)
         case .notConfigured:
             return .stop(.notConfigured)
-        case .quotaExceeded(let retryAfter):
-            return .stop(.usageLimitReached(retryAfter: retryAfter))
+        case .quotaExceeded:
+            return .stop(.usageLimitReached(retryAfter: nil))
         case .rateLimited(let retryAfter):
             // A short wait is absorbed; a long one is the user's to decide.
             if let retryAfter, retryAfter <= configuration.maxRateLimitWait.timeInterval {
@@ -623,7 +629,7 @@ public actor TranslationSession: TranslationSessionControlling {
         emit(.phrase(phrase))
     }
 
-    private func noteTranslationFailure(_ error: BackendError?) {
+    private func noteTranslationFailure(_ error: ServiceError?) {
         switch error {
         case .unauthorized:
             if let run {

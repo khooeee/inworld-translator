@@ -243,8 +243,7 @@ final class FakeCredentials: CredentialProviding {
         try state.withLock { state in
             if !state.failures.isEmpty { throw state.failures.removeFirst() }
             let credential = STTCredential(
-                accessToken: "token-\(state.issued.count)",
-                expiresAt: Date().addingTimeInterval(120),
+                authorization: "Basic key-\(state.issued.count)",
                 websocketURL: URL(string: "wss://stt.invalid/stream")!,
                 modelID: "inworld/inworld-stt-1"
             )

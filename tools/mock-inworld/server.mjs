@@ -1,7 +1,6 @@
-// A local stand-in for the three Inworld endpoints the product uses, for tests
-// and for running the app without an API key:
+// A local stand-in for the two Inworld endpoints the app uses, so the app and
+// its tests can run without an API key:
 //
-//   POST /auth/v1/tokens                              single-use token mint
 //   WS   /stt/v1/transcribe:streamBidirectional       streaming STT
 //   POST /v1/chat/completions                         chat completions (SSE)
 //
@@ -10,9 +9,8 @@
 // gaps arrive with realistic timing. Message shapes and the authentication
 // failure behavior follow the Inworld docs and the live endpoint.
 //
-// Run standalone:  node tools/mock-inworld.mjs [--port 8788]
+// Run:  node server.mjs [--port 8788]
 
-import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
@@ -36,16 +34,6 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // then revises the whole phrase, as the real service does.
 const rough = (words) => words.join(' ').toLowerCase().replace(/[.,!?¿¡。、؟]/g, '').trim();
 
-function authError(message) {
-  return {
-    error: {
-      code: 16,
-      message,
-      details: [{ errorType: 'SESSION_TOKEN_INVALID', reconnectType: 'NO_RETRY', maxRetries: 0 }],
-    },
-  };
-}
-
 export async function startMockInworld({
   port = 0,
   host = '127.0.0.1',
@@ -57,15 +45,12 @@ export async function startMockInworld({
   chunkDelayMs = 30,
   verbose = false,
 } = {}) {
-  const tokens = new Map(); // accessToken -> expiry (ms)
   const sockets = new Set();
-  const stats = { mints: 0, sttConnections: 0, sttAuthFailures: 0, completions: 0, audioMs: 0 };
-  const received = { lastCompletion: null }; // request bodies, for assertions
+  const stats = { sttConnections: 0, sttAuthFailures: 0, completions: 0, audioMs: 0 };
+  const received = { lastCompletion: null, lastSTTConfig: null }; // request bodies, for assertions
 
-  // One-shot failure injection, settable from tests or POST /__mock/faults.
+  // Failure injection, settable from tests or POST /__mock/faults.
   const faults = {
-    failMints: 0, // fail the next N mints with mintStatus
-    mintStatus: 500,
     dropAfterAudioMs: null, // cut the next STT connection, without a close frame, after this much audio
     failCompletions: 0, // fail the next N completions with completionStatus
     completionStatus: 500,
@@ -89,32 +74,6 @@ export async function startMockInworld({
     const header = req.headers.authorization ?? '';
     return header === `Basic ${apiKey}` || header === `Bearer ${apiKey}`;
   };
-
-  async function handleMint(req, res) {
-    // Bearer callers are refused, so a token can never mint another token.
-    if (req.headers.authorization !== `Basic ${apiKey}`) {
-      return json(res, 401, { code: 16, message: 'authentication is required', details: [] });
-    }
-    const body = await readBody(req);
-    if (faults.failMints > 0) {
-      faults.failMints -= 1;
-      return json(res, faults.mintStatus, { code: 13, message: 'injected failure' });
-    }
-    if (body.single_use !== true) return json(res, 400, { code: 3, message: 'single_use must be true' });
-    const ttlSeconds = Number.parseInt(body.ttl ?? '900', 10);
-    const accessToken = `mock-token-${randomUUID()}`;
-    const expiresAt = Date.now() + ttlSeconds * 1000;
-    tokens.set(accessToken, expiresAt);
-    stats.mints += 1;
-    json(res, 200, {
-      name: `tokens/${randomUUID()}`,
-      accessToken,
-      expireTime: new Date(expiresAt).toISOString(),
-      singleUse: true,
-      clientReferenceId: body.client_reference_id,
-      createTime: new Date().toISOString(),
-    });
-  }
 
   function mockTranslation(phrase) {
     const line = translations.get(phrase);
@@ -188,13 +147,16 @@ export async function startMockInworld({
   const server = createServer(async (req, res) => {
     try {
       const { pathname } = new URL(req.url, 'http://localhost');
-      if (req.method === 'POST' && pathname === '/auth/v1/tokens') return await handleMint(req, res);
       if (req.method === 'POST' && pathname === '/v1/chat/completions') return await handleCompletion(req, res);
       if (req.method === 'POST' && pathname === '/__mock/faults') {
         Object.assign(faults, await readBody(req));
         return json(res, 200, faults);
       }
-      if (req.method === 'GET' && pathname === '/__mock/stats') return json(res, 200, stats);
+      if (req.method === 'POST' && pathname === '/__mock/drop') {
+        dropConnections();
+        return json(res, 200, { dropped: true });
+      }
+      if (req.method === 'GET' && pathname === '/__mock/stats') return json(res, 200, { ...stats, ...received });
       json(res, 404, { error: { message: 'not found' } });
     } catch (error) {
       log('request failed', error);
@@ -203,11 +165,7 @@ export async function startMockInworld({
     }
   });
 
-  const wss = new WebSocketServer({
-    noServer: true,
-    // Echo the bearer_ subprotocol, as the real endpoint does.
-    handleProtocols: (protocols) => [...protocols].find((p) => p.startsWith('bearer_')) ?? false,
-  });
+  const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
     const { pathname } = new URL(req.url, 'http://localhost');
@@ -215,33 +173,22 @@ export async function startMockInworld({
     wss.handleUpgrade(req, socket, head, (ws) => handleSTT(ws, req));
   });
 
-  function presentedToken(req) {
-    const header = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '');
-    if (header) return header[1];
-    const protocols = String(req.headers['sec-websocket-protocol'] ?? '').split(',');
-    const bearer = protocols.map((p) => p.trim()).find((p) => p.startsWith('bearer_'));
-    return bearer ? bearer.slice('bearer_'.length) : null;
-  }
-
   function handleSTT(ws, req) {
     sockets.add(ws);
     ws.on('close', () => sockets.delete(ws));
     const send = (payload) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(payload));
 
-    // Like the real endpoint, the upgrade succeeds and the authentication
+    // Like the real endpoint, the upgrade succeeds and an authentication
     // failure arrives as an error frame followed by a normal close.
-    const token = presentedToken(req);
-    const expiresAt = token ? tokens.get(token) : undefined;
-    if (token) tokens.delete(token); // single use, valid or not
-    if (!token || !expiresAt || expiresAt < Date.now()) {
+    if (!hasApiKey(req)) {
       stats.sttAuthFailures += 1;
-      send(
-        authError(
-          token
-            ? 'The session token is invalid or has expired. Obtain a new token and reconnect.'
-            : 'authentication is required',
-        ),
-      );
+      send({
+        error: {
+          code: 16,
+          message: 'authentication is required',
+          details: [{ errorType: 'SESSION_TOKEN_INVALID', reconnectType: 'NO_RETRY', maxRetries: 0 }],
+        },
+      });
       setTimeout(() => ws.close(1000), 200);
       return;
     }
@@ -339,6 +286,7 @@ export async function startMockInworld({
           return send({ error: { code: 3, message: 'invalid transcribe config: unsupported audio encoding' } });
         }
         config = { ...tc, binary: message.audioProtocol === 'BINARY' };
+        received.lastSTTConfig = message;
         bytesPerMs = ((tc.sampleRateHertz ?? 16000) * 2 * (tc.numberOfChannels ?? 1)) / 1000;
         return log('stt configured', JSON.stringify(config));
       }
@@ -353,22 +301,24 @@ export async function startMockInworld({
     });
   }
 
+  // Cuts every open STT connection without a close frame, like a network drop.
+  function dropConnections() {
+    sockets.forEach((ws) => ws.terminate());
+  }
+
   await new Promise((resolve) => server.listen(port, host, resolve));
   const address = server.address();
-  const origin = `http://${host}:${address.port}`;
 
   return {
-    url: origin,
-    sttWebSocketURL: `ws://${host}:${address.port}${STT_PATH}`,
+    url: `http://${host}:${address.port}`,
     apiKey,
     faults,
     stats,
     received,
     script,
-    // Cuts every open STT connection without a close frame, like a network drop.
-    dropConnections: () => sockets.forEach((ws) => ws.terminate()),
+    dropConnections,
     close: async () => {
-      sockets.forEach((ws) => ws.terminate());
+      dropConnections();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
     },
@@ -378,8 +328,6 @@ export async function startMockInworld({
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const portFlag = process.argv.indexOf('--port');
   const port = portFlag === -1 ? 8788 : Number(process.argv[portFlag + 1]);
-  const mock = await startMockInworld({ port, verbose: true });
-  console.log(`Mock Inworld listening on ${mock.url}`);
-  console.log(`  INWORLD_API_BASE=${mock.url}`);
-  console.log(`  INWORLD_API_KEY=${mock.apiKey}`);
+  const mock = await startMockInworld({ port, verbose: process.argv.includes('--verbose') });
+  console.log(`Mock Inworld listening on ${mock.url} (API key: ${mock.apiKey})`);
 }
