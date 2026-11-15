@@ -54,6 +54,12 @@ struct STTWireTests {
         }
         #expect(error.isAuthentication)
         #expect(!error.isInvalidArgument)
+        // Captured from the live endpoint with a wrong Basic key.
+        guard case .error(let wrongKey) = STTWire.decode(#"{"error":{"code":7, "message":"Invalid authorization credentials", "details":[]}}"#) else {
+            Issue.record("expected an error")
+            return
+        }
+        #expect(wrongKey.isAuthentication)
         guard case .error(let invalid) = STTWire.decode(#"{"error":{"code":3,"message":"invalid transcribe config"}}"#) else {
             Issue.record("expected an error")
             return

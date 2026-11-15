@@ -110,7 +110,9 @@ public struct STTServiceError: Error, Sendable, Equatable {
 
     /// The request itself is wrong; retrying the same request cannot help.
     public var isInvalidArgument: Bool { code == 3 }
-    public var isAuthentication: Bool { code == 16 }
+    /// The live service answers a wrong key with 7 (PERMISSION_DENIED) and a
+    /// missing one with 16 (UNAUTHENTICATED).
+    public var isAuthentication: Bool { code == 7 || code == 16 }
 }
 
 public enum STTConnectionError: Error, Sendable, Equatable {

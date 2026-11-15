@@ -179,17 +179,22 @@ export async function startMockInworld({
     const send = (payload) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(payload));
 
     // Like the real endpoint, the upgrade succeeds and an authentication
-    // failure arrives as an error frame followed by a normal close.
+    // failure arrives as an error frame followed by a normal close: code 16
+    // without credentials, code 7 with wrong ones.
     if (!hasApiKey(req)) {
       stats.sttAuthFailures += 1;
-      send({
-        error: {
-          code: 16,
-          message: 'authentication is required',
-          details: [{ errorType: 'SESSION_TOKEN_INVALID', reconnectType: 'NO_RETRY', maxRetries: 0 }],
-        },
-      });
-      setTimeout(() => ws.close(1000), 200);
+      send(
+        req.headers.authorization
+          ? { error: { code: 7, message: 'Invalid authorization credentials', details: [] } }
+          : {
+              error: {
+                code: 16,
+                message: 'authentication is required',
+                details: [{ errorType: 'SESSION_TOKEN_INVALID', reconnectType: 'NO_RETRY', maxRetries: 0 }],
+              },
+            },
+      );
+      setTimeout(() => ws.close(1000), 20);
       return;
     }
 
