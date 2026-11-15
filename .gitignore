@@ -1,0 +1,23 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+App/Config/Local.xcconfig
+
+# Xcode / SwiftPM
+*.xcodeproj
+xcuserdata/
+DerivedData/
+.build/
+.swiftpm/
+*.xcresult
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Generated validation artifacts
+backend/tools/samples/
+backend/tools/reports/
+
+.DS_Store

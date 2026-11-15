@@ -1,0 +1,173 @@
+import Foundation
+
+/// Identifies one phrase for the lifetime of the app. IDs increase in the
+/// order phrases were first heard, so sorting by ID is sorting by time.
+public struct PhraseID: Hashable, Comparable, Sendable, CustomStringConvertible {
+    public let rawValue: Int
+
+    public init(_ rawValue: Int) {
+        self.rawValue = rawValue
+    }
+
+    public static func < (lhs: PhraseID, rhs: PhraseID) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    public var description: String { "#\(rawValue)" }
+}
+
+/// Why a finalized phrase has no English translation.
+public enum TranslationUnavailableReason: Sendable, Equatable {
+    /// The request failed, or timed out, after any retry.
+    case failed
+    /// Dropped from the queue so translation could keep up with live speech.
+    case skipped
+    /// The session stopped before the translation finished.
+    case cancelled
+    /// Nothing translatable was recognized in the audio.
+    case unintelligible
+    /// The backend refused the request because a usage limit was reached.
+    case limitReached
+}
+
+/// When each stage of a phrase happened, for latency measurement.
+public struct PhraseTiming: Sendable, Equatable {
+    public var startedAt: Date
+    public var finalizedAt: Date?
+    public var translationStartedAt: Date?
+    public var translationCompletedAt: Date?
+
+    public init(startedAt: Date) {
+        self.startedAt = startedAt
+    }
+
+    /// Time from the final transcript to the first translated text.
+    public var firstTextLatency: TimeInterval? {
+        guard let finalizedAt, let translationStartedAt else { return nil }
+        return translationStartedAt.timeIntervalSince(finalizedAt)
+    }
+
+    /// Time from the final transcript to the complete translation.
+    public var translationLatency: TimeInterval? {
+        guard let finalizedAt, let translationCompletedAt else { return nil }
+        return translationCompletedAt.timeIntervalSince(finalizedAt)
+    }
+}
+
+/// One spoken phrase: the recognized source text and its English translation.
+public struct Phrase: Identifiable, Sendable, Equatable {
+    public enum SourceState: Sendable, Equatable {
+        /// Still being spoken; the text is replaced as recognition improves.
+        case provisional
+        /// The recognizer committed this text.
+        case final
+        /// Committed from the last provisional text because the connection or
+        /// the session ended before the recognizer finalized the turn.
+        case interrupted
+    }
+
+    public enum Translation: Sendable, Equatable {
+        /// Not requested yet; the source is still provisional.
+        case none
+        /// Requested, no text yet.
+        case pending
+        /// Text received so far; more is coming.
+        case partial(String)
+        case completed(String)
+        case unavailable(TranslationUnavailableReason)
+    }
+
+    public let id: PhraseID
+    public var sourceText: String
+    public var sourceState: SourceState
+    public var translation: Translation
+    /// ISO 639 code of the spoken language, known once translation starts.
+    public var languageCode: String?
+    public var timing: PhraseTiming
+
+    public init(
+        id: PhraseID,
+        sourceText: String,
+        sourceState: SourceState = .provisional,
+        translation: Translation = .none,
+        languageCode: String? = nil,
+        timing: PhraseTiming
+    ) {
+        self.id = id
+        self.sourceText = sourceText
+        self.sourceState = sourceState
+        self.translation = translation
+        self.languageCode = languageCode
+        self.timing = timing
+    }
+
+    /// The finished English text, if there is one.
+    public var english: String? {
+        if case .completed(let text) = translation { return text }
+        return nil
+    }
+
+    /// True when the phrase was spoken in English, so the translation only
+    /// repeats the source.
+    public var isSpokenInEnglish: Bool {
+        languageCode == "en"
+    }
+
+    /// True once neither the source nor the translation can change again.
+    public var isSettled: Bool {
+        switch translation {
+        case .completed, .unavailable: return true
+        case .none, .pending, .partial: return false
+        }
+    }
+}
+
+public enum SessionStatus: Sendable, Equatable {
+    case idle
+    /// Getting microphone access and opening the first connection.
+    case starting
+    case listening
+    /// The connection dropped; a new one is being opened.
+    case reconnecting
+    case waitingForNetwork
+    /// Another app, such as a phone call, has taken the microphone.
+    case interrupted
+    /// Stop was requested; the microphone is off and the last results are
+    /// being collected.
+    case finishing
+
+    /// True while the session holds, or is about to hold, the microphone.
+    public var isRunning: Bool {
+        switch self {
+        case .idle, .finishing: return false
+        case .starting, .listening, .reconnecting, .waitingForNetwork, .interrupted: return true
+        }
+    }
+}
+
+/// Something the user should be told about why the session ended or degraded.
+public enum SessionNotice: Sendable, Equatable {
+    case microphoneDenied
+    case microphoneUnavailable
+    case notConfigured
+    case unauthorized
+    case usageLimitReached(retryAfter: TimeInterval?)
+    case connectionFailed
+    case serviceRejectedRequest
+    case stoppedAfterSilence
+    case stoppedInBackground
+    case stoppedByInterruption
+    /// Translations are being refused by a usage limit; listening continues.
+    case translationLimited
+}
+
+public enum SessionEvent: Sendable, Equatable {
+    case status(SessionStatus)
+    /// A phrase was added or changed. Match on `phrase.id`.
+    case phrase(Phrase)
+    /// A provisional phrase turned out to contain no speech.
+    case removed(PhraseID)
+    /// Microphone level, 0 through 1.
+    case level(Float)
+    case notice(SessionNotice)
+}
