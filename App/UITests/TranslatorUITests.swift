@@ -1,0 +1,122 @@
+import XCTest
+
+/// Drives the app in the Simulator against the mock Inworld server, with
+/// audio played from the generated sample files instead of the microphone.
+///
+/// Before running:
+///   node tools/mock-inworld/server.mjs --port 8788
+///   python3 -I tools/samples/make_samples.py
+@MainActor
+final class TranslatorUITests: XCTestCase {
+    static let mockURL = URL(string: "http://127.0.0.1:8788")!
+    static let samplesDirectory = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("tools/samples/out")
+
+    /// The mock plays its own script; this is the first line, translated.
+    static let firstCaption = "Good morning, how are you today?"
+
+    struct MockStats: Decodable {
+        let sttConnections: Int
+        let sttAuthFailures: Int
+        let completions: Int
+        let audioMs: Double
+    }
+
+    override func setUp() async throws {
+        continueAfterFailure = false
+        guard FileManager.default.fileExists(atPath: Self.samplesDirectory.appendingPathComponent("es-name-time.pcm").path) else {
+            throw XCTSkip("Generate the audio samples first: python3 -I tools/samples/make_samples.py")
+        }
+        do {
+            _ = try await mockStats()
+        } catch {
+            throw XCTSkip("Start the mock first: node tools/mock-inworld/server.mjs --port 8788")
+        }
+    }
+
+    func mockStats() async throws -> MockStats {
+        let (data, _) = try await URLSession.shared.data(from: Self.mockURL.appendingPathComponent("__mock/stats"))
+        return try JSONDecoder().decode(MockStats.self, from: data)
+    }
+
+    func launch(apiKey: String?) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-InworldBaseURL", Self.mockURL.absoluteString,
+            "-AudioSamplesDirectory", Self.samplesDirectory.path,
+            "-AudioSampleIDs", "es-name-time,ja-phone",
+        ]
+        if let apiKey {
+            app.launchArguments += ["-InworldAPIKey", apiKey]
+        }
+        app.launch()
+        return app
+    }
+
+    func caption(_ text: String, in app: XCUIApplication) -> XCUIElement {
+        app.cells.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+    }
+
+    func removeSavedKey(in app: XCUIApplication) {
+        app.navigationBars.buttons["API key"].tap()
+        let remove = app.buttons["Remove Saved Key"]
+        if remove.waitForExistence(timeout: 2) {
+            remove.tap()
+        }
+        // The system close button's label varies by iOS version; it is the
+        // only button in the key screen's bar.
+        app.navigationBars["Inworld API Key"].buttons.firstMatch.tap()
+    }
+
+    func testCaptionsAppearAndStopReleasesAudio() async throws {
+        let app = launch(apiKey: "mock-api-key")
+        app.buttons["Start"].tap()
+        XCTAssertTrue(app.buttons["Stop"].waitForExistence(timeout: 10))
+        XCTAssertTrue(caption(Self.firstCaption, in: app).waitForExistence(timeout: 30))
+
+        app.buttons["Stop"].tap()
+        XCTAssertTrue(app.buttons["Start"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.otherElements["Connection"].value as? String, "Ready")
+
+        // Nothing more reaches Inworld once stopped.
+        let stopped = try await mockStats().audioMs
+        try await Task.sleep(for: .seconds(2))
+        let later = try await mockStats().audioMs
+        XCTAssertEqual(stopped, later)
+    }
+
+    func testAPIKeyIsCheckedSavedAndUsed() async throws {
+        let app = launch(apiKey: nil)
+        removeSavedKey(in: app)
+        addTeardownBlock { @MainActor in self.removeSavedKey(in: app) }
+
+        app.buttons["Start"].tap()
+        XCTAssertTrue(app.staticTexts["Add your Inworld API key to start translating."].waitForExistence(timeout: 5))
+        app.buttons["Add API Key"].tap()
+
+        let field = app.secureTextFields["API key"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("wrong-key")
+        app.buttons["Check and Save"].tap()
+        XCTAssertTrue(app.staticTexts["Inworld didn't accept this key. Copy it again from the Portal."].waitForExistence(timeout: 10))
+
+        field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "wrong-key".count))
+        field.typeText("mock-api-key")
+        app.buttons["Check and Save"].tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Add your Inworld API key to start translating."].exists)
+
+        // The mock only answers with the right key, so captions prove the
+        // saved key was sent to both the STT and translation endpoints.
+        let failures = try await mockStats().sttAuthFailures
+        app.buttons["Start"].tap()
+        XCTAssertTrue(caption(Self.firstCaption, in: app).waitForExistence(timeout: 30))
+        app.buttons["Stop"].tap()
+        XCTAssertTrue(app.buttons["Start"].waitForExistence(timeout: 15))
+        let failuresAfter = try await mockStats().sttAuthFailures
+        XCTAssertEqual(failures, failuresAfter)
+    }
+}

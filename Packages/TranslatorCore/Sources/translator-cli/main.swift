@@ -104,7 +104,7 @@ do {
 }
 let audioDirectory = options.manifest.deletingLastPathComponent().appendingPathComponent("out")
 let samples = manifest.samples.filter { options.only?.contains($0.id) ?? true }
-var clips: [FileAudioSource.Clip] = []
+var clips: [PCMFileAudioSource.Clip] = []
 for _ in 0..<max(1, options.loops) {
     for sample in samples {
         let url = audioDirectory.appendingPathComponent("\(sample.id).pcm")
@@ -120,7 +120,7 @@ var clientConfiguration = InworldClient.Configuration(baseURL: options.baseURL)
 if let model = options.model { clientConfiguration.translationModel = model }
 let client = InworldClient(configuration: clientConfiguration) { apiKey }
 let translator = MeteredTranslator(client)
-let audio = FileAudioSource(playlist: clips, speed: options.speed)
+let audio = PCMFileAudioSource(playlist: clips, speed: options.speed)
 
 var sessionConfiguration = TranslationSession.Configuration()
 sessionConfiguration.idleTimeout = nil

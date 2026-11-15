@@ -1,8 +1,9 @@
-// A local stand-in for the two Inworld endpoints the app uses, so the app and
+// A local stand-in for the Inworld endpoints the app uses, so the app and
 // its tests can run without an API key:
 //
 //   WS   /stt/v1/transcribe:streamBidirectional       streaming STT
 //   POST /v1/chat/completions                         chat completions (SSE)
+//   GET  /llm/v1alpha/models                          the key check in Settings
 //
 // The STT socket does not recognize speech. It plays back a script, paced by
 // how much audio it has received, so interims, revisions, finals, and turn
@@ -78,6 +79,10 @@ export async function startMockInworld({
   function mockTranslation(phrase) {
     const line = translations.get(phrase);
     if (line) return `${line.language}\n${line.english}`;
+    // A turn cut short (endTurn, closeStream) is a piece of a script line:
+    // keep that line's language, and mark the English as not a real translation.
+    const piece = script.find((candidate) => candidate.text.includes(phrase));
+    if (piece) return piece.language === 'en' ? `en\n${phrase}` : `${piece.language}\n[mock] ${phrase}`;
     return `en\n${phrase}`;
   }
 
@@ -148,6 +153,11 @@ export async function startMockInworld({
     try {
       const { pathname } = new URL(req.url, 'http://localhost');
       if (req.method === 'POST' && pathname === '/v1/chat/completions') return await handleCompletion(req, res);
+      // The app's key check: lists models, and fails with 401 for a bad key.
+      if (req.method === 'GET' && pathname === '/llm/v1alpha/models') {
+        if (!hasApiKey(req)) return json(res, 401, { error: { message: 'Unauthorized' } });
+        return json(res, 200, { models: [{ model: 'gemini-2.5-flash-lite', provider: 'google-ai-studio' }] });
+      }
       if (req.method === 'POST' && pathname === '/__mock/faults') {
         Object.assign(faults, await readBody(req));
         return json(res, 200, faults);

@@ -1,21 +1,26 @@
 import Foundation
 import Synchronization
-import TranslatorCore
 
-/// Plays PCM files into a session as if they were the microphone: 100 ms
-/// chunks at real-time pace (or faster), with silence between files so each
-/// one ends a turn, and silence after the last one until the session stops.
-final class FileAudioSource: AudioCapturing {
-    struct Clip: Sendable {
-        let id: String
-        let pcm: Data
+/// Plays 16 kHz mono PCM16 clips into a session as if they were the
+/// microphone: 100 ms chunks at real-time pace (or faster), with silence
+/// between clips so each one ends a turn, and silence after the last one
+/// until the session stops. For the validation harness and Debug builds.
+public final class PCMFileAudioSource: AudioCapturing {
+    public struct Clip: Sendable {
+        public let id: String
+        public let pcm: Data
+
+        public init(id: String, pcm: Data) {
+            self.id = id
+            self.pcm = pcm
+        }
     }
 
     /// When each clip's audio started and finished going out.
-    struct Playback: Sendable {
-        let id: String
-        let startedAt: Date
-        var endedAt: Date?
+    public struct Playback: Sendable {
+        public let id: String
+        public let startedAt: Date
+        public var endedAt: Date?
     }
 
     private struct State {
@@ -33,17 +38,17 @@ final class FileAudioSource: AudioCapturing {
     private let state = Mutex(State())
     private static let chunkBytes = 3200 // 100 ms at 16 kHz mono PCM16
 
-    init(playlist: [Clip], speed: Double, gap: Duration = .milliseconds(1500)) {
+    public init(playlist: [Clip], speed: Double = 1, gap: Duration = .milliseconds(1500)) {
         self.playlist = playlist
         self.speed = speed
         self.gap = gap
     }
 
-    var playback: [Playback] { state.withLock { $0.playback } }
-    var audioSeconds: Double { Double(state.withLock { $0.bytesSent }) / 32_000 }
-    var isFinished: Bool { state.withLock { $0.finished } }
+    public var playback: [Playback] { state.withLock { $0.playback } }
+    public var audioSeconds: Double { Double(state.withLock { $0.bytesSent }) / 32_000 }
+    public var isFinished: Bool { state.withLock { $0.finished } }
 
-    func start() async throws -> AudioCaptureStream {
+    public func start() async throws -> AudioCaptureStream {
         let (chunks, chunkContinuation) = AsyncStream<AudioChunk>.makeStream(bufferingPolicy: .bufferingNewest(50))
         let (events, eventContinuation) = AsyncStream<AudioCaptureEvent>.makeStream()
         let player = Task { [self, playlist, speed, gap] in
@@ -91,7 +96,7 @@ final class FileAudioSource: AudioCapturing {
         return AudioCaptureStream(chunks: chunks, events: events)
     }
 
-    func stop() async {
+    public func stop() async {
         let (player, chunks, events) = state.withLock { state in
             defer {
                 state.player = nil
@@ -106,61 +111,14 @@ final class FileAudioSource: AudioCapturing {
         events?.finish()
     }
 
-    private static func level(of pcm: Data) -> Float {
+    /// Loudness of a PCM16 chunk on a 0 to 1 scale, for the level meter.
+    public static func level(of pcm: Data) -> Float {
         pcm.withUnsafeBytes { raw in
             let samples = raw.bindMemory(to: Int16.self)
             guard !samples.isEmpty else { return 0 }
             let sum = samples.reduce(0.0) { $0 + Double($1) * Double($1) }
             let rms = (sum / Double(samples.count)).squareRoot() / Double(Int16.max)
             return Float(min(1, rms * 4))
-        }
-    }
-}
-
-/// Always online; the harness does not simulate network changes.
-struct AlwaysOnline: ConnectivityMonitoring {
-    func updates() -> AsyncStream<Bool> {
-        AsyncStream { continuation in
-            continuation.yield(true)
-        }
-    }
-}
-
-/// Passes translations through and adds up the tokens they were billed for.
-final class MeteredTranslator: Translating {
-    private let inner: any Translating
-    private let totals = Mutex((prompt: 0, completion: 0, requests: 0, models: [String: Int]()))
-
-    init(_ inner: any Translating) {
-        self.inner = inner
-    }
-
-    var usage: (prompt: Int, completion: Int, requests: Int, models: [String: Int]) {
-        totals.withLock { $0 }
-    }
-
-    func translate(_ request: TranslationRequest) -> AsyncThrowingStream<TranslationUpdate, Error> {
-        let upstream = inner.translate(request)
-        totals.withLock { $0.requests += 1 }
-        return AsyncThrowingStream { continuation in
-            let task = Task { [self] in
-                do {
-                    for try await update in upstream {
-                        if case .usage(let prompt, let completion, let model) = update {
-                            self.totals.withLock {
-                                $0.prompt += prompt
-                                $0.completion += completion
-                                if let model { $0.models[model, default: 0] += 1 }
-                            }
-                        }
-                        continuation.yield(update)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
         }
     }
 }
