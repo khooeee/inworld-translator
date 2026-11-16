@@ -8,6 +8,9 @@ finished phrase into English.
 - Words appear while they are spoken, in italics, and settle when the phrase is final.
 - The English for each phrase appears beneath the original words.
 - Phrases spoken in English are shown as they are, without a translation.
+- Recognition covers the
+  [30 languages of Inworld STT-1](https://docs.inworld.ai/stt/languages). The
+  app lists them under **⋯ → Supported Languages**.
 - This version shows captions only; spoken playback is not built yet.
 
 UIKit built in code, Swift 6 language mode with complete strict concurrency,

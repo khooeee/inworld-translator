@@ -55,8 +55,12 @@ final class TranslationViewController: UIViewController {
         let clear = UIAction(title: String(localized: "Clear Conversation"), image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
             self?.viewModel.clear()
         }
-        let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), menu: UIMenu(children: [copyAll, clear]))
-        more.accessibilityLabel = String(localized: "Conversation options")
+        let languages = UIAction(title: String(localized: "Supported Languages"), image: UIImage(systemName: "globe")) { [weak self] _ in
+            self?.navigationController?.pushViewController(SupportedLanguagesViewController(), animated: true)
+        }
+        let conversation = UIMenu(options: .displayInline, children: [copyAll, clear])
+        let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), menu: UIMenu(children: [conversation, languages]))
+        more.accessibilityLabel = String(localized: "More")
         let settings = UIBarButtonItem(image: UIImage(systemName: "key"), primaryAction: UIAction { [weak self] _ in
             self?.openAPIKeySettings()
         })
