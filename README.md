@@ -98,6 +98,7 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
 | `App/UITests` | UI tests against the mock server. |
 | `tools/mock-inworld` | Local stand-in for the Inworld endpoints. |
 | `tools/samples` | Speech sample manifest (27 languages) and generator. |
+| `tools/icon` | Script that draws the app icon: `swift tools/icon/make_icon.swift`. |
 
 ### Concurrency
 
