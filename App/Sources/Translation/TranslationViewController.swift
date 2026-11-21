@@ -169,7 +169,7 @@ final class TranslationViewController: UIViewController {
 
         speakButton.translatesAutoresizingMaskIntoConstraints = false
         speakButton.accessibilityLabel = String(localized: "Speak Translations")
-        speakButton.accessibilityHint = String(localized: "Reads each translation aloud. Listening pauses while it speaks.")
+        speakButton.accessibilityHint = String(localized: "Reads translations aloud. Listening continues on supported headphone routes.")
         speakButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.viewModel.setSpeaksTranslations(!self.viewModel.speaksTranslations)

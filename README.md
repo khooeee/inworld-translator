@@ -103,7 +103,7 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
                                             │  streamed 24 kHz PCM
                                             ▼
                                   AVAudioPlayerNode on the same engine
-                                  (microphone muted while it plays)
+                                  (microphone stays open on headphone routes)
 ```
 
 ### Code layout
@@ -158,11 +158,11 @@ Off by default; the setting is remembered. When it is on:
   translations finish out of order. One phrase plays at a time.
 - **Taking turns.** Speech waits while someone is mid-sentence and starts at
   the next pause. A phrase already playing finishes.
-- **No feedback loop.** While the phone speaks, and for 300 ms after, the
-  microphone sends silence instead of what it hears. Otherwise the phone
-  would caption its own voice. This is half-duplex, like the conversation
-  modes in Apple's and Google's translator apps: anything said over the
-  phone is not heard. The status line reads **Speaking translation** meanwhile.
+- **Listening during playback.** With wired headphones or a Bluetooth
+  hands-free headset that provides hardware voice processing, captions
+  continue while the phone speaks. On speaker routes, the microphone
+  sends silence through playback and for 300 ms afterward to avoid
+  feeding translations back into the app.
 - **Backlog.** At most 2 phrases wait behind the one playing. Past that, the
   oldest waiting phrase is not spoken. Its caption is unaffected.
 - **Stop.** Stop, turning speech off, or a phone call silences speech at once.
@@ -170,9 +170,9 @@ Off by default; the setting is remembered. When it is on:
 - **Failures.** If speech fails, a notice says so once per session. Captions
   carry on.
 - **Audio.** The audio session is `.playAndRecord` with `.defaultToSpeaker`,
-  so speech comes from the loudspeaker, not the earpiece. Audio streams from
-  `/tts/v1/voice:stream` as raw 24 kHz PCM and starts playing with the first
-  chunk.
+  so speech uses the loudspeaker when there's no headset route. Audio
+  streams from `/tts/v1/voice:stream` as raw 24 kHz PCM and starts playing
+  with the first chunk.
 - **Voice and cost.** Voice "Ashley", model `inworld-tts-2-flash`, with the
   target language sent explicitly. Billed at about $15 per million characters.
 

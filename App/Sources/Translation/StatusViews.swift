@@ -47,7 +47,6 @@ final class ConnectionStatusView: UIView {
     }
 
     static func describe(_ status: SessionStatus, speaking: Bool = false) -> (String, UIColor) {
-        // Listening is paused while the phone talks.
         if speaking, status == .listening {
             return (String(localized: "Speaking translation"), .systemBlue)
         }

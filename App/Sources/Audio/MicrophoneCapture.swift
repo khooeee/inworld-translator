@@ -11,13 +11,10 @@ import TranslatorCore
 /// Recovers by itself from route changes (headphones, Bluetooth, unplugging),
 /// and reports interruptions such as phone calls so the session can pause.
 ///
-/// While speech plays, and for a moment after, the microphone delivers
-/// silence instead of what it hears, so the phone never translates itself.
+/// The microphone stays open with headphones and uses a short mute window
+/// for loudspeaker playback to prevent the app from translating its own voice.
 actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     private static let log = Logger(subsystem: "InworldTranslator", category: "audio")
-    /// How long the microphone stays muted after speech ends, for the sound
-    /// still in the air and in the capture pipeline.
-    private static let echoTail: Duration = .milliseconds(300)
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -94,6 +91,7 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     // MARK: Engine
 
     private func startEngine() throws {
+        gate.updateRoute(allowsListening: Self.currentOutputAllowsListening())
         let input = engine.inputNode
         input.removeTap(onBus: 0)
         let format = input.outputFormat(forBus: 0)
@@ -132,6 +130,24 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
 
     // MARK: System events
 
+    private static func currentOutputAllowsListening() -> Bool {
+        let route = AVAudioSession.sharedInstance().currentRoute
+        let handsFreeInput = route.inputs.first { $0.portType == .bluetoothHFP }
+        // Every active output must qualify. A generic Bluetooth output can
+        // be a speaker; a processed hands-free route has its own echo handling.
+        return !route.outputs.isEmpty && route.outputs.allSatisfy { output in
+            switch output.portType {
+            case .headphones:
+                return true
+            case .bluetoothHFP:
+                guard let handsFreeInput else { return false }
+                return output.hasHardwareVoiceCallProcessing || handsFreeInput.hasHardwareVoiceCallProcessing
+            default:
+                return false
+            }
+        }
+    }
+
     private func observeSystemEvents() {
         let center = NotificationCenter.default
         let session = AVAudioSession.sharedInstance()
@@ -149,7 +165,9 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
             Task { await self?.restartEngine(reason: "configuration change") }
         })
 
-        observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: nil) { note in
+        observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: nil) { [gate] note in
+            // Update the gate before any asynchronous engine restart.
+            gate.updateRoute(allowsListening: Self.currentOutputAllowsListening())
             let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt).flatMap(AVAudioSession.RouteChangeReason.init)
             Self.log.info("Audio route changed: \(String(describing: reason?.rawValue), privacy: .public)")
         })
@@ -197,14 +215,13 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
 
     func play(_ audio: AsyncThrowingStream<Data, any Error>) async throws {
         guard isRunning, !isInterrupted, engine.isRunning else { throw AudioCaptureError.unavailable }
+        if playback != nil { cutPlayback() }
         let tracker = PlaybackTracker()
-        playback?.cancel()
         playback = tracker
-        gate.close()
+        gate.updateRoute(allowsListening: Self.currentOutputAllowsListening())
+        gate.startPlayback()
         defer {
-            player.stop()
-            gate.open(after: Self.echoTail)
-            if playback === tracker { playback = nil }
+            if playback === tracker { cutPlayback() }
         }
 
         try await withTaskCancellationHandler {
@@ -241,6 +258,7 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
         playback?.cancel()
         playback = nil
         player.stop()
+        gate.stopPlayback()
     }
 
     private func makeBuffer(_ pcm: Data) -> AVAudioPCMBuffer? {
@@ -270,11 +288,14 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     }
 }
 
-/// Mutes the microphone while speech plays and for a short tail after it.
-/// Read from the audio tap, set from the capture actor.
+/// Mutes capture for speaker playback and its echo tail. The route observer
+/// updates the same gate that the audio tap reads.
 private final class SpeechGate: Sendable {
+    private static let echoTail: Duration = .milliseconds(300)
+
     private struct State {
         var playing = false
+        var allowsListening = false
         var mutedUntil: ContinuousClock.Instant?
     }
 
@@ -282,18 +303,29 @@ private final class SpeechGate: Sendable {
 
     var isMuted: Bool {
         state.withLock { state in
-            state.playing || state.mutedUntil.map { ContinuousClock.now < $0 } ?? false
+            (state.playing && !state.allowsListening) || state.mutedUntil.map { ContinuousClock.now < $0 } ?? false
         }
     }
 
-    func close() {
+    func updateRoute(allowsListening: Bool) {
+        state.withLock {
+            if $0.playing, !$0.allowsListening, allowsListening {
+                $0.mutedUntil = .now + Self.echoTail
+            }
+            $0.allowsListening = allowsListening
+        }
+    }
+
+    func startPlayback() {
         state.withLock { $0.playing = true }
     }
 
-    func open(after tail: Duration) {
+    func stopPlayback() {
         state.withLock {
+            if $0.playing, !$0.allowsListening {
+                $0.mutedUntil = .now + Self.echoTail
+            }
             $0.playing = false
-            $0.mutedUntil = .now + tail
         }
     }
 
@@ -389,7 +421,6 @@ private final class PCMConverter: Sendable {
         // The tap's buffer is only valid during the callback; the converter
         // copies out of it synchronously below.
         nonisolated(unsafe) let input = buffer
-        let muted = gate.isMuted
         let ready: [Data] = state.withLock { state in
             var consumed = false
             var error: NSError?
@@ -405,7 +436,7 @@ private final class PCMConverter: Sendable {
             }
             guard status != .error, let samples = state.output.int16ChannelData?[0] else { return [] }
             let count = Int(state.output.frameLength)
-            if muted {
+            if gate.isMuted {
                 state.pending.append(contentsOf: repeatElement(0, count: count))
             } else {
                 state.pending.append(contentsOf: UnsafeBufferPointer(start: samples, count: count))
