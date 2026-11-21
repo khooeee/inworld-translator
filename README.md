@@ -196,9 +196,10 @@ Off by default; the setting is remembered. When it is on:
 - **Route changes.** Headphones, AirPods or another input that changes the
   audio format makes the engine post a configuration change. The app then
   rebuilds the tap and restarts capture.
-- **Automatic stops.** Listening stops when the app leaves the screen, since
-  Inworld bills per second of audio. It also stops after 3 minutes without
-  speech.
+- **Background sessions.** An active session keeps listening and translating
+  when you lock the phone or switch apps. Spoken translations continue when
+  enabled. Inworld bills for the audio streamed in the background.
+- **Automatic stop.** Listening stops after 3 minutes without speech.
 - **Stop.** Stop releases the microphone first. It then closes the stream so
   the last words finalize, waits up to 6 s for translations in flight, and
   cancels the rest.
@@ -322,7 +323,6 @@ Mock server, Simulator and macOS, November 2026.
 | All 32 samples, 4× speed | 51 phrases, all translated. Final → English p50 250 ms, p95 342 ms. Memory 13 → 19 MB. |
 | 64 clips with a forced STT drop every 7 s | 24 reconnects, 121/121 phrases translated, integrity checks pass, no notices. Memory flat at ~24 MB over 170 s. |
 | 8 injected translation failures (5 HTTP 500s, 3 streams cut before `[DONE]`) | 4 phrases marked "Couldn't translate" after a retry; the other 9 translated. Listening continued, integrity checks pass. |
-| Backgrounding in the Simulator | Audio to the server stopped within one chunk, with a "Stopped because the app left the screen" notice. |
 | Dynamic Type (AX3), dark mode, VoiceOver labels | Checked in the Simulator |
 | Live endpoint with an invalid key | STT returns code 7. The session stops at once with "Inworld didn't accept the API key" instead of retrying. |
 
@@ -365,8 +365,9 @@ the mock, because it plays a script whatever audio it receives.
   - Another app taking the mic stops listening with a notice.
 - [ ] **Route changes.** Plug in or unplug wired headphones, and connect or
   disconnect AirPods. Listening should continue.
-- [ ] **Stop.** The orange microphone indicator disappears right away on Stop
-  and when the app goes to the background.
+- [ ] **Background sessions.** Start listening, switch apps, then lock the
+  phone. Spoken translations continue when enabled, and new captions are
+  visible when you return. **Stop** releases the microphone.
 - [ ] **Long session.** A 30-minute session should show stable memory,
   acceptable battery use and no thermal throttling.
 - [ ] **Accessibility.** Use VoiceOver (captions read in order, copy

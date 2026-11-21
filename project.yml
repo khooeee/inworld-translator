@@ -38,7 +38,9 @@ targets:
         CFBundleVersion: "1"
         LSRequiresIPhoneOS: true
         ITSAppUsesNonExemptEncryption: false
-        NSMicrophoneUsageDescription: Translator listens to the people around you and shows captions in your chosen language.
+        NSMicrophoneUsageDescription: Translator uses the microphone to translate speech around you, including during active sessions when the screen is locked or you switch apps.
+        UIBackgroundModes:
+          - audio
         UILaunchScreen: {}
         UIApplicationSupportsIndirectInputEvents: true
         UIApplicationSceneManifest:
