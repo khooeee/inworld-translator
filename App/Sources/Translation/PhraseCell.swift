@@ -5,6 +5,7 @@ import UIKit
 final class PhraseCell: UITableViewCell {
     static let reuseIdentifier = "PhraseCell"
 
+    private let speakingIndicator = UIView()
     private let headerLabel = UILabel()
     private let sourceLabel = UILabel()
     private let translationLabel = UILabel()
@@ -15,6 +16,11 @@ final class PhraseCell: UITableViewCell {
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
+
+        speakingIndicator.backgroundColor = .systemBlue
+        speakingIndicator.isHidden = true
+        speakingIndicator.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(speakingIndicator)
 
         for label in [headerLabel, sourceLabel, translationLabel] {
             label.numberOfLines = 0
@@ -31,6 +37,10 @@ final class PhraseCell: UITableViewCell {
         stack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(stack)
         NSLayoutConstraint.activate([
+            speakingIndicator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            speakingIndicator.topAnchor.constraint(equalTo: contentView.topAnchor),
+            speakingIndicator.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            speakingIndicator.widthAnchor.constraint(equalToConstant: 3),
             stack.topAnchor.constraint(equalTo: contentView.layoutMarginsGuide.topAnchor),
             stack.bottomAnchor.constraint(equalTo: contentView.layoutMarginsGuide.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
@@ -46,6 +56,9 @@ final class PhraseCell: UITableViewCell {
     }
 
     func configure(with phrase: Phrase, isSpeaking: Bool = false) {
+        contentView.backgroundColor = isSpeaking ? .systemBlue.withAlphaComponent(0.14) : .clear
+        speakingIndicator.isHidden = !isSpeaking
+
         let spokenInTargetLanguage = phrase.isSpokenInTargetLanguage
         let targetName = phrase.targetLanguage.name()
         let outsideLanguagePair = phrase.translation == .unavailable(.outsideLanguagePair)
@@ -101,10 +114,10 @@ final class PhraseCell: UITableViewCell {
             translationLabel.textColor = .secondaryLabel
         }
 
-        updateAccessibility(for: phrase)
+        updateAccessibility(for: phrase, isSpeaking: isSpeaking)
     }
 
-    private func updateAccessibility(for phrase: Phrase) {
+    private func updateAccessibility(for phrase: Phrase, isSpeaking: Bool) {
         let label = NSMutableAttributedString()
         func append(_ text: String, language: String? = nil) {
             if label.length > 0 {
@@ -129,6 +142,7 @@ final class PhraseCell: UITableViewCell {
         accessibilityAttributedLabel = label
 
         switch (phrase.sourceState, phrase.translation) {
+        case _ where isSpeaking: accessibilityValue = String(localized: "Speaking")
         case (.provisional, _): accessibilityValue = String(localized: "Still listening")
         case (_, .pending), (_, .partial):
             accessibilityValue = phrase.isSpokenInTargetLanguage ? nil : String(localized: "Translating")
