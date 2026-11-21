@@ -177,10 +177,10 @@ final class TranslationViewController: UIViewController {
 
         var jump = UIButton.Configuration.filled()
         jump.cornerStyle = .capsule
-        jump.buttonSize = .small
+        jump.buttonSize = .large
         jump.title = String(localized: "Jump to Latest")
         jump.image = UIImage(systemName: "arrow.down")
-        jump.imagePadding = 4
+        jump.imagePadding = 8
         jump.baseBackgroundColor = .secondarySystemFill
         jump.baseForegroundColor = .label
         jumpButton.configuration = jump
@@ -233,7 +233,10 @@ final class TranslationViewController: UIViewController {
             tableView.bottomAnchor.constraint(equalTo: bottomStack.topAnchor, constant: -8),
 
             jumpButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            jumpButton.bottomAnchor.constraint(equalTo: tableView.bottomAnchor, constant: -12),
+            jumpButton.bottomAnchor.constraint(equalTo: tableView.bottomAnchor, constant: -24),
+            jumpButton.leadingAnchor.constraint(greaterThanOrEqualTo: readable.leadingAnchor),
+            jumpButton.trailingAnchor.constraint(lessThanOrEqualTo: readable.trailingAnchor),
+            jumpButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
 
             bottomStack.leadingAnchor.constraint(equalTo: readable.leadingAnchor),
             bottomStack.trailingAnchor.constraint(equalTo: readable.trailingAnchor),
