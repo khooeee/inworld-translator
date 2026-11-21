@@ -9,10 +9,23 @@ enum TranslationPrompt {
     private static func system(for request: TranslationRequest) -> String {
         let target = request.targetLanguage
         let name = languageName(target)
-        let namesRule = target == .english ? "write them in Latin script" : "transliterate them when customary in the target language"
+        let namesRule = target == .english && !request.bidirectional
+            ? "write them in Latin script"
+            : "transliterate them when customary in the output language"
+        var task = "Translate automatically recognized speech into \(name) (\(target.rawValue))."
         let languageLine: String
+        var translationLine = "the \(name) translation of \"phrase\"."
         let interpretation: String
-        if let source = request.sourceLanguage {
+        let detection = "the ISO 639 code of the main language of \"phrase\" (for example es, ja, en, yue), or und if it cannot be determined. Use zh for Mandarin Chinese and yue for Cantonese."
+        if request.bidirectional, let source = request.sourceLanguage {
+            let sourceName = languageName(source)
+            task = "Translate automatically recognized speech between \(sourceName) (\(source.rawValue)) and \(name) (\(target.rawValue))."
+            languageLine = detection
+            translationLine = "the translation into the other selected language."
+            interpretation = """
+            Detect the language of the current phrase independently of the preceding conversation. If the phrase is in \(sourceName), write \(source.rawValue) on line 1 and translate into \(name). If the phrase is in \(name), write \(target.rawValue) on line 1 and translate into \(sourceName). For mixed speech, use the main language. For speech in another language or an unclear source, report the detected code or und and leave line 2 empty.
+            """
+        } else if let source = request.sourceLanguage {
             let sourceName = languageName(source)
             languageLine = "the selected source language code, \(source.rawValue)."
             let instruction = source == target
@@ -20,22 +33,23 @@ enum TranslationPrompt {
                 : "Translate from \(sourceName) into \(name)."
             interpretation = "Interpret \"phrase\" as \(sourceName), including recognizable phonetic spellings. \(instruction)"
         } else {
-            languageLine = "the ISO 639 code of the main language of \"phrase\" (for example es, ja, en, yue), or und if it cannot be determined. Use zh for Mandarin Chinese and yue for Cantonese."
+            languageLine = detection
             interpretation = "If \"phrase\" is already in \(name), return it unchanged apart from obvious capitalization and punctuation fixes."
         }
-        let emptyLanguage = request.sourceLanguage?.rawValue ?? "und"
+        let emptyLanguage = request.bidirectional ? "und" : request.sourceLanguage?.rawValue ?? "und"
         return """
-        You are the translation engine of a live-captioning app. Translate automatically recognized speech into \(name) (\(target.rawValue)).
+        You are the translation engine of a live-captioning app. \(task)
 
         Each input is a JSON object:
         - "phrase": the transcript segment to translate. It can be in any language, can mix languages, can be a sentence fragment, and can contain recognition errors.
         - "context": earlier segments of the same conversation, oldest first. Reference only.
-        - "sourceLanguage": the selected source language code, when provided. Auto-detect the source when this field is absent.
-        - "targetLanguage": the app's selected target language code.
+        - "sourceLanguage": the selected input language, or the first language of a two-way pair. Auto-detect the source when this field is absent.
+        - "targetLanguage": the selected output language, or the second language of a two-way pair.
+        - "bidirectional": true when either member can be the input language.
 
         Reply with exactly two lines and nothing else:
         Line 1: \(languageLine)
-        Line 2: the \(name) translation of "phrase".
+        Line 2: \(translationLine)
 
         Rules:
         - Translate only "phrase". Never translate, repeat, or summarize "context". Use it only to resolve pronouns, names, and ambiguous words.
@@ -106,6 +120,7 @@ enum TranslationPrompt {
         let phrase: String
         let sourceLanguage: TranslationLanguage?
         let targetLanguage: TargetLanguage
+        let bidirectional: Bool?
     }
 
     private static func envelope(_ request: TranslationRequest) -> String {
@@ -115,7 +130,8 @@ enum TranslationPrompt {
             context: request.context,
             phrase: request.text,
             sourceLanguage: request.sourceLanguage,
-            targetLanguage: request.targetLanguage
+            targetLanguage: request.targetLanguage,
+            bidirectional: request.bidirectional ? true : nil
         )
         let data = (try? encoder.encode(envelope)) ?? Data()
         return String(decoding: data, as: UTF8.self)

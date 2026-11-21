@@ -48,13 +48,14 @@ final class PhraseCell: UITableViewCell {
     func configure(with phrase: Phrase, isSpeaking: Bool = false) {
         let spokenInTargetLanguage = phrase.isSpokenInTargetLanguage
         let targetName = phrase.targetLanguage.name()
+        let outsideLanguagePair = phrase.translation == .unavailable(.outsideLanguagePair)
 
         var header: [String] = []
         if phrase.sourceState == .provisional {
             header.append(String(localized: "Listening…"))
         } else if let sourceName = Self.languageName(phrase.languageCode) {
-            header.append(spokenInTargetLanguage ? sourceName : String(localized: "\(sourceName) → \(targetName)"))
-        } else {
+            header.append(spokenInTargetLanguage || outsideLanguagePair ? sourceName : String(localized: "\(sourceName) → \(targetName)"))
+        } else if phrase.translation != .pending, !outsideLanguagePair {
             header.append(String(localized: "To \(targetName)"))
         }
         if phrase.sourceState == .interrupted {
@@ -159,6 +160,7 @@ final class PhraseCell: UITableViewCell {
         case .skipped: String(localized: "Skipped to keep up with the conversation.")
         case .cancelled: String(localized: "Stopped before it was translated.")
         case .unintelligible: String(localized: "No words to translate.")
+        case .outsideLanguagePair: String(localized: "Neither selected language was recognized.")
         case .limitReached: String(localized: "Not translated: Inworld usage limit.")
         }
     }

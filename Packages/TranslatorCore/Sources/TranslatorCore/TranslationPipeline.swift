@@ -27,10 +27,10 @@ public actor TranslationPipeline {
         public enum Kind: Sendable, Equatable {
             /// The request is starting, or starting over after a failed try.
             case pending
-            case language(String)
+            case language(String, targetLanguage: TargetLanguage? = nil)
             /// All of the translated text received so far.
             case partial(String)
-            case completed(String, language: String?)
+            case completed(String, language: String?, targetLanguage: TargetLanguage? = nil)
             case unavailable(TranslationUnavailableReason, error: ServiceError?)
         }
 
@@ -46,6 +46,7 @@ public actor TranslationPipeline {
         let text: String
         let sourceLanguage: TranslationLanguage?
         let targetLanguage: TargetLanguage
+        let bidirectional: Bool
     }
 
     private struct HistoryEntry {
@@ -77,9 +78,16 @@ public actor TranslationPipeline {
         id: PhraseID,
         text: String,
         sourceLanguage: TranslationLanguage? = nil,
-        targetLanguage: TargetLanguage = .english
+        targetLanguage: TargetLanguage = .english,
+        bidirectional: Bool = false
     ) {
-        let job = Job(id: id, text: text, sourceLanguage: sourceLanguage, targetLanguage: targetLanguage)
+        let job = Job(
+            id: id,
+            text: text,
+            sourceLanguage: sourceLanguage,
+            targetLanguage: targetLanguage,
+            bidirectional: bidirectional
+        )
         history.append(HistoryEntry(job: job, translation: nil))
         let historyLimit = configuration.contextSize + configuration.maxConcurrent + configuration.maxWaiting + 1
         if history.count > historyLimit {
@@ -130,7 +138,8 @@ public actor TranslationPipeline {
                 text: job.text,
                 context: context(before: job),
                 sourceLanguage: job.sourceLanguage,
-                targetLanguage: job.targetLanguage
+                targetLanguage: job.targetLanguage,
+                bidirectional: job.bidirectional
             )
             running[job.id] = Task { [translator, configuration, continuation] in
                 let outcome = await Self.run(request, translator: translator, configuration: configuration) { kind in
@@ -143,7 +152,7 @@ public actor TranslationPipeline {
 
     private func finish(_ id: PhraseID, outcome: Update.Kind) {
         running[id] = nil
-        if case .completed(let translation, _) = outcome,
+        if case .completed(let translation, _, _) = outcome,
            let index = history.firstIndex(where: { $0.job.id == id }) {
             history[index].translation = translation
         }
@@ -170,9 +179,11 @@ public actor TranslationPipeline {
             .filter { $0.job.id < job.id }
             .suffix(configuration.contextSize)
             .map { entry in
-                TranslationContextItem(
-                    source: entry.job.text,
-                    translation: entry.job.targetLanguage == job.targetLanguage ? entry.translation : nil
+                let previous = entry.job
+                let sameTarget = !job.bidirectional && !previous.bidirectional && previous.targetLanguage == job.targetLanguage
+                return TranslationContextItem(
+                    source: previous.text,
+                    translation: sameTarget ? entry.translation : nil
                 )
             }
     }
@@ -187,7 +198,7 @@ public actor TranslationPipeline {
         configuration: Configuration,
         progress: @escaping @Sendable (Update.Kind) -> Void
     ) async -> Update.Kind {
-        let selectedLanguage = request.sourceLanguage?.rawValue
+        let selectedLanguage = request.bidirectional ? nil : request.sourceLanguage?.rawValue
         var attempt = 1
         while true {
             progress(.pending)
@@ -200,11 +211,19 @@ public actor TranslationPipeline {
                         case .language(let code):
                             if selectedLanguage == nil {
                                 language = code
-                                progress(.language(code))
+                                if request.bidirectional {
+                                    if let target = request.destination(for: code) {
+                                        progress(.language(code, targetLanguage: target))
+                                    }
+                                } else {
+                                    progress(.language(code))
+                                }
                             }
                         case .delta(let delta):
                             text += delta
-                            progress(.partial(text))
+                            if !request.bidirectional || request.destination(for: language) != nil {
+                                progress(.partial(text))
+                            }
                         case .usage:
                             break
                         case .completed(let translation, let finalLanguage):
@@ -214,11 +233,14 @@ public actor TranslationPipeline {
                     try Task.checkCancellation()
                     throw ServiceError.invalidResponse
                 }
+                guard let target = request.destination(for: language) else {
+                    return .unavailable(.outsideLanguagePair, error: nil)
+                }
                 let trimmed = translation.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty {
                     return .unavailable(.unintelligible, error: nil)
                 }
-                return .completed(trimmed, language: language)
+                return .completed(trimmed, language: language, targetLanguage: request.bidirectional ? target : nil)
             } catch {
                 if Task.isCancelled { return .unavailable(.cancelled, error: nil) }
                 let serviceError = error as? ServiceError

@@ -82,19 +82,22 @@ export async function startMockInworld({
     return header === `Basic ${apiKey}` || header === `Bearer ${apiKey}`;
   };
 
-  function mockTranslation(phrase, targetLanguage) {
+  function mockTranslation(phrase, targetLanguage, reverseLanguage) {
     const line = translations.get(phrase);
+    const source = line ?? script.find((candidate) => candidate.text.includes(phrase));
+    const language = source?.language ?? 'en';
+    if (reverseLanguage) {
+      if (language === targetLanguage) targetLanguage = reverseLanguage;
+      else if (language !== reverseLanguage) return `${language}\n`;
+    }
     if (targetLanguage !== 'en') {
-      const source = line ?? script.find((candidate) => candidate.text.includes(phrase));
-      const language = source?.language ?? 'en';
       const text = language === targetLanguage ? phrase : `[mock ${targetLanguage}] ${phrase}`;
       return `${language}\n${text}`;
     }
     if (line) return `${line.language}\n${line.english}`;
     // A turn cut short (endTurn, closeStream) is a piece of a script line:
     // keep that line's language, and mark the English as not a real translation.
-    const piece = script.find((candidate) => candidate.text.includes(phrase));
-    if (piece) return piece.language === 'en' ? `en\n${phrase}` : `${piece.language}\n[mock] ${phrase}`;
+    if (source) return language === 'en' ? `en\n${phrase}` : `${language}\n[mock] ${phrase}`;
     return `en\n${phrase}`;
   }
 
@@ -111,16 +114,21 @@ export async function startMockInworld({
     const last = body.messages?.at(-1)?.content ?? '';
     let phrase = last;
     let targetLanguage = 'en';
+    let reverseLanguage;
     try {
       const request = JSON.parse(last);
       phrase = request.phrase ?? last;
       if (typeof request.targetLanguage === 'string' && /^[a-z]{2,3}$/.test(request.targetLanguage)) {
         targetLanguage = request.targetLanguage;
       }
+      if (request.bidirectional === true && typeof request.sourceLanguage === 'string' &&
+          /^[a-z]{2,3}$/.test(request.sourceLanguage) && request.sourceLanguage !== targetLanguage) {
+        reverseLanguage = request.sourceLanguage;
+      }
     } catch {
       // Not the translator's JSON envelope; echo the raw message.
     }
-    const reply = mockTranslation(phrase, targetLanguage);
+    const reply = mockTranslation(phrase, targetLanguage, reverseLanguage);
     const usage = {
       prompt_tokens: Math.ceil(JSON.stringify(body.messages ?? []).length / 4),
       completion_tokens: Math.ceil(reply.length / 4),

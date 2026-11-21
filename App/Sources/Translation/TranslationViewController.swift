@@ -12,6 +12,7 @@ final class TranslationViewController: UIViewController {
     private let levelMeter = LevelMeterView()
     private let sourceButton = UIButton(configuration: .tinted())
     private let targetButton = UIButton(configuration: .tinted())
+    private let bidirectionalButton = UIButton(configuration: .gray())
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let emptyLabel = UILabel()
     private let noticeView = NoticeView()
@@ -78,6 +79,10 @@ final class TranslationViewController: UIViewController {
     private func configureHeader() {
         configureLanguageButton(sourceButton, mode: .source)
         configureLanguageButton(targetButton, mode: .target)
+        bidirectionalButton.accessibilityLabel = String(localized: "Bidirectional translation")
+        bidirectionalButton.addAction(UIAction { [weak self] _ in
+            self?.viewModel.toggleBidirectional()
+        }, for: .primaryActionTriggered)
     }
 
     private func configureLanguageButton(_ button: UIButton, mode: LanguagePickerViewController.Mode) {
@@ -188,8 +193,10 @@ final class TranslationViewController: UIViewController {
     }
 
     private func layout() {
-        let languageRow = UIStackView(arrangedSubviews: [sourceButton, targetButton])
-        languageRow.distribution = .fillEqually
+        let languagePickers = UIStackView(arrangedSubviews: [sourceButton, targetButton])
+        languagePickers.distribution = .fillEqually
+        languagePickers.spacing = 8
+        let languageRow = UIStackView(arrangedSubviews: [languagePickers, bidirectionalButton])
         languageRow.spacing = 8
         languageRow.translatesAutoresizingMaskIntoConstraints = false
 
@@ -218,6 +225,7 @@ final class TranslationViewController: UIViewController {
             languageRow.leadingAnchor.constraint(equalTo: readable.leadingAnchor),
             languageRow.trailingAnchor.constraint(equalTo: readable.trailingAnchor),
             languageRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            bidirectionalButton.widthAnchor.constraint(equalToConstant: 44),
 
             tableView.topAnchor.constraint(equalTo: languageRow.bottomAnchor, constant: 8),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -266,7 +274,6 @@ final class TranslationViewController: UIViewController {
         // starting at launch.
         render(status: viewModel.status)
         render(notice: viewModel.notice)
-        renderLanguages()
         renderSpeechToggle()
         apply(TranslationViewModel.PhraseChanges(inserted: viewModel.phrases.map(\.id)))
     }
@@ -301,8 +308,7 @@ final class TranslationViewController: UIViewController {
 
     private func render(status: SessionStatus) {
         statusView.show(status, speaking: viewModel.speaking != nil)
-        sourceButton.isEnabled = viewModel.canChangeLanguages
-        targetButton.isEnabled = viewModel.canChangeLanguages
+        renderLanguages()
         var configuration = startButton.configuration ?? .filled()
         if status.isRunning {
             configuration.title = String(localized: "Stop")
@@ -340,12 +346,26 @@ final class TranslationViewController: UIViewController {
     }
 
     private func renderLanguages() {
+        let canChange = viewModel.canChangeLanguages
+        sourceButton.isEnabled = canChange
+        targetButton.isEnabled = canChange
         let source = viewModel.sourceLanguage?.name() ?? LanguagePickerViewController.autoDetectTitle
         sourceButton.configuration?.title = String(localized: "From · \(source)")
         sourceButton.accessibilityValue = source
         let target = viewModel.targetLanguage.name()
         targetButton.configuration?.title = String(localized: "To · \(target)")
         targetButton.accessibilityValue = target
+
+        let on = viewModel.isBidirectional
+        var configuration: UIButton.Configuration = on ? .tinted() : .gray()
+        configuration.cornerStyle = .capsule
+        configuration.image = UIImage(systemName: "arrow.left.arrow.right")
+        bidirectionalButton.configuration = configuration
+        bidirectionalButton.isEnabled = canChange && viewModel.canUseBidirectional
+        bidirectionalButton.accessibilityValue = on ? String(localized: "On") : String(localized: "Off")
+        bidirectionalButton.accessibilityHint = viewModel.canUseBidirectional
+            ? String(localized: "Translates each selected language into the other.")
+            : String(localized: "Choose two different languages to translate both ways.")
     }
 
     private func renderSpeechToggle() {

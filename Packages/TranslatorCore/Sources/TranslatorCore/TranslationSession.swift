@@ -4,7 +4,7 @@ import Foundation
 public protocol TranslationSessionControlling: Sendable {
     /// Everything that happens, in order. Single consumer.
     var events: AsyncStream<SessionEvent> { get }
-    func start(sourceLanguage: TranslationLanguage?, targetLanguage: TargetLanguage) async
+    func start(sourceLanguage: TranslationLanguage?, targetLanguage: TargetLanguage, bidirectional: Bool) async
     /// Stops listening. The microphone is released first; the last results
     /// are then collected for a bounded time. `notice` tells the user why,
     /// when the stop was not their own doing.
@@ -55,6 +55,9 @@ public actor TranslationSession: TranslationSessionControlling {
     private struct Languages {
         let source: TranslationLanguage?
         let target: TargetLanguage
+        let bidirectional: Bool
+
+        var fixedSourceCode: String? { bidirectional ? nil : source?.rawValue }
     }
 
     private struct Run {
@@ -100,7 +103,7 @@ public actor TranslationSession: TranslationSessionControlling {
     // Speech
     private struct SpeechSlot {
         let id: PhraseID
-        let language: TargetLanguage
+        var language: TargetLanguage
         var settled = false
         /// What to say once settled; nil for nothing.
         var text: String?
@@ -161,13 +164,21 @@ public actor TranslationSession: TranslationSessionControlling {
 
     // MARK: - Start and stop
 
-    public func start(sourceLanguage: TranslationLanguage? = nil, targetLanguage: TargetLanguage = .english) {
+    public func start(
+        sourceLanguage: TranslationLanguage? = nil,
+        targetLanguage: TargetLanguage = .english,
+        bidirectional: Bool = false
+    ) {
         guard run == nil else { return }
         observeTranslations()
         observeSpeech()
         runCounter += 1
         let id = runCounter
-        let languages = Languages(source: sourceLanguage, target: targetLanguage)
+        let languages = Languages(
+            source: sourceLanguage,
+            target: targetLanguage,
+            bidirectional: bidirectional && sourceLanguage != nil && sourceLanguage != targetLanguage
+        )
 
         // A stop still collecting its last results is cut short. The new run
         // waits for it, so capture is never started and stopped out of order.
@@ -382,7 +393,7 @@ public actor TranslationSession: TranslationSessionControlling {
     /// with exponential backoff when it drops.
     private func superviseConnection(runID: Int, languages: Languages) async {
         var stt = configuration.stt
-        stt.languageHint = languages.source ?? stt.languageHint
+        stt.languageHint = languages.bidirectional ? nil : (languages.source ?? stt.languageHint)
         var attempt = 0
         while isCurrent(runID), !Task.isCancelled {
             if suspended {
@@ -592,7 +603,7 @@ public actor TranslationSession: TranslationSessionControlling {
                 let phrase = Phrase(
                     id: makePhraseID(),
                     sourceText: text,
-                    languageCode: languages.source?.rawValue,
+                    languageCode: languages.fixedSourceCode,
                     targetLanguage: languages.target,
                     timing: PhraseTiming(startedAt: now())
                 )
@@ -637,7 +648,7 @@ public actor TranslationSession: TranslationSessionControlling {
         var phrase = existing ?? Phrase(
             id: makePhraseID(),
             sourceText: text,
-            languageCode: languages.source?.rawValue,
+            languageCode: languages.fixedSourceCode,
             targetLanguage: languages.target,
             timing: PhraseTiming(startedAt: timestamp)
         )
@@ -654,7 +665,8 @@ public actor TranslationSession: TranslationSessionControlling {
             id: phrase.id,
             text: text,
             sourceLanguage: languages.source,
-            targetLanguage: phrase.targetLanguage
+            targetLanguage: languages.target,
+            bidirectional: languages.bidirectional
         )
     }
 
@@ -687,18 +699,20 @@ public actor TranslationSession: TranslationSessionControlling {
         case .pending:
             guard phrase.translation != .pending else { return }
             phrase.translation = .pending
-        case .language(let code):
+        case .language(let code, let target):
             phrase.languageCode = code
+            phrase.targetLanguage = target ?? phrase.targetLanguage
         case .partial(let text):
             if phrase.timing.translationStartedAt == nil {
                 phrase.timing.translationStartedAt = now()
             }
             phrase.translation = .partial(text)
-        case .completed(let text, let language):
+        case .completed(let text, let language, let target):
             let timestamp = now()
             phrase.timing.translationStartedAt = phrase.timing.translationStartedAt ?? timestamp
             phrase.timing.translationCompletedAt = timestamp
             phrase.languageCode = language ?? phrase.languageCode
+            phrase.targetLanguage = target ?? phrase.targetLanguage
             phrase.translation = .completed(text)
         case .unavailable(let reason, let error):
             phrase.translation = .unavailable(reason)
@@ -734,6 +748,7 @@ public actor TranslationSession: TranslationSessionControlling {
     private func settleSpeech(for phrase: Phrase) {
         guard let index = speechBacklog.firstIndex(where: { $0.id == phrase.id }) else { return }
         speechBacklog[index].settled = true
+        speechBacklog[index].language = phrase.targetLanguage
         speechBacklog[index].text = phrase.isSpokenInTargetLanguage ? nil : phrase.translatedText
         while let first = speechBacklog.first, first.settled {
             speechBacklog.removeFirst()

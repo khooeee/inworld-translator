@@ -26,6 +26,8 @@ public enum TranslationUnavailableReason: String, Codable, Sendable, Equatable {
     case cancelled
     /// Nothing translatable was recognized in the audio.
     case unintelligible
+    /// No direction could be selected for a two-way translation.
+    case outsideLanguagePair
     /// Inworld refused the request because a usage limit was reached.
     case limitReached
 }
@@ -83,7 +85,7 @@ public struct Phrase: Identifiable, Sendable, Equatable {
     public var translation: Translation
     /// Selected or detected ISO 639 code of the source language.
     public var languageCode: String?
-    public let targetLanguage: TargetLanguage
+    public internal(set) var targetLanguage: TargetLanguage
     public var timing: PhraseTiming
 
     public init(

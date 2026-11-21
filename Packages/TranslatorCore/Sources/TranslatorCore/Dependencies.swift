@@ -187,20 +187,31 @@ public struct TranslationRequest: Sendable, Equatable {
     public let text: String
     /// Earlier phrases of the conversation, oldest first.
     public let context: [TranslationContextItem]
-    /// The selected source language. Nil lets the translator detect it.
+    /// The selected source language, or the first member of the two-way pair.
     public let sourceLanguage: TranslationLanguage?
     public let targetLanguage: TargetLanguage
+    public let bidirectional: Bool
 
     public init(
         text: String,
         context: [TranslationContextItem],
         sourceLanguage: TranslationLanguage? = nil,
-        targetLanguage: TargetLanguage = .english
+        targetLanguage: TargetLanguage = .english,
+        bidirectional: Bool = false
     ) {
         self.text = text
         self.context = context
         self.sourceLanguage = sourceLanguage
         self.targetLanguage = targetLanguage
+        self.bidirectional = bidirectional && sourceLanguage != nil && sourceLanguage != targetLanguage
+    }
+
+    /// Resolves a two-way phrase's destination from its detected source.
+    func destination(for languageCode: String?) -> TargetLanguage? {
+        guard bidirectional, let sourceLanguage else { return targetLanguage }
+        if sourceLanguage.matches(languageCode) { return targetLanguage }
+        if targetLanguage.matches(languageCode) { return sourceLanguage }
+        return nil
     }
 }
 

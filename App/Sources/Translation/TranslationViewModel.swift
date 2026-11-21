@@ -26,6 +26,7 @@ final class TranslationViewModel {
     static let speaksTranslationsKey = "SpeaksTranslations"
     static let sourceLanguageKey = "SourceLanguage"
     static let targetLanguageKey = "TargetLanguage"
+    static let bidirectionalKey = "BidirectionalTranslation"
 
     var onPhrasesChanged: ((PhraseChanges) -> Void)?
     var onStatusChanged: ((SessionStatus) -> Void)?
@@ -46,6 +47,7 @@ final class TranslationViewModel {
     private(set) var speaksTranslations: Bool
     private(set) var sourceLanguage: TranslationLanguage?
     private(set) var targetLanguage: TargetLanguage
+    private var prefersBidirectional: Bool
 
     private let session: any TranslationSessionControlling
     private let defaults: UserDefaults
@@ -60,6 +62,7 @@ final class TranslationViewModel {
         speaksTranslations = defaults.bool(forKey: Self.speaksTranslationsKey)
         sourceLanguage = defaults.string(forKey: Self.sourceLanguageKey).flatMap(TranslationLanguage.init(rawValue:))
         targetLanguage = defaults.string(forKey: Self.targetLanguageKey).flatMap(TargetLanguage.init(rawValue:)) ?? .english
+        prefersBidirectional = defaults.bool(forKey: Self.bidirectionalKey)
         events = Task { [weak self, events = session.events] in
             for await event in events {
                 self?.apply(event)
@@ -76,6 +79,8 @@ final class TranslationViewModel {
 
     var isRunning: Bool { status.isRunning }
     var canChangeLanguages: Bool { status == .idle }
+    var canUseBidirectional: Bool { sourceLanguage != nil && sourceLanguage != targetLanguage }
+    var isBidirectional: Bool { canUseBidirectional && prefersBidirectional }
 
     func phrase(for id: PhraseID) -> Phrase? {
         positions[id].map { phrases[$0] }
@@ -100,8 +105,11 @@ final class TranslationViewModel {
         show(nil)
         let sourceLanguage = self.sourceLanguage
         let targetLanguage = self.targetLanguage
+        let bidirectional = isBidirectional
         apply(.status(.starting))
-        Task { await session.start(sourceLanguage: sourceLanguage, targetLanguage: targetLanguage) }
+        Task {
+            await session.start(sourceLanguage: sourceLanguage, targetLanguage: targetLanguage, bidirectional: bidirectional)
+        }
     }
 
     func stop(notice: SessionNotice? = nil) {
@@ -131,6 +139,13 @@ final class TranslationViewModel {
         guard canChangeLanguages, targetLanguage != language else { return }
         targetLanguage = language
         defaults.set(language.rawValue, forKey: Self.targetLanguageKey)
+        onLanguagesChanged?()
+    }
+
+    func toggleBidirectional() {
+        guard canChangeLanguages, canUseBidirectional else { return }
+        prefersBidirectional.toggle()
+        defaults.set(prefersBidirectional, forKey: Self.bidirectionalKey)
         onLanguagesChanged?()
     }
 

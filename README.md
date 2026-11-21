@@ -10,9 +10,13 @@ switches mid-conversation. An LLM on Inworld translates each finished phrase.
   status. While the app is **Ready**, choose from any of the 30 languages.
   The defaults are **Auto Detect** for the source and **English** for the
   target. The app remembers both choices for the next listening session.
-- A specific source language sets the language used for translation and
-  caption labels. It also gives Inworld speech recognition a language hint.
-  **Auto Detect** follows language switches.
+- The two-way arrow beside **To** is available when **From** and **To**
+  are two different languages. Turn it on to translate speech in either
+  selected language into the other. For example, Chinese speech produces
+  English and English speech produces Chinese.
+- In one-way mode, a specific source language sets the language used for
+  translation and caption labels. It also gives Inworld speech recognition
+  a language hint. **Auto Detect** follows language switches.
 - Each translation appears beneath the original words in the same caption.
   Speech already in the target language appears once.
 - Recognition covers the same
