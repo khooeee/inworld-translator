@@ -4,14 +4,14 @@ import Synchronization
 /// Speaks translations aloud, one at a time, in the order given.
 ///
 /// Speech waits while someone is mid-sentence (the floor is taken), so the
-/// phone does not talk over the conversation it is translating. The queue is
-/// short: when it overflows, the oldest waiting phrase is skipped, because
-/// hearing what was just said matters more than catching up. Its methods are
+/// phone does not talk over the conversation it is translating. Finished
+/// translations wait for their turn. The queue's methods are
 /// synchronous, so requests are handled in exactly the order they were made.
 public final class SpeechQueue: Sendable {
     public struct Configuration: Sendable, Equatable {
-        /// Phrases allowed to wait behind the one being spoken.
-        public var maxWaiting = 2
+        /// Phrases allowed to wait behind the one being spoken. The default
+        /// keeps every waiting translation until it plays or speech stops.
+        public var maxWaiting = Int.max
 
         public init() {}
     }
@@ -19,6 +19,8 @@ public final class SpeechQueue: Sendable {
     public enum Event: Sendable, Equatable {
         /// This phrase is being spoken; nil once nothing is.
         case speaking(PhraseID?)
+        /// The number of translations waiting to be spoken.
+        case waitingCount(Int)
         /// A phrase could not be spoken. The error is nil when the failure
         /// was not the service's, such as the speaker being unavailable.
         case failed(ServiceError?)
@@ -35,6 +37,7 @@ public final class SpeechQueue: Sendable {
 
     private struct State {
         var waiting: [Item] = []
+        var reportedWaitingCount = 0
         var current: (id: PhraseID, task: Task<Void, Never>)?
         var floorTaken = false
     }
@@ -75,6 +78,11 @@ public final class SpeechQueue: Sendable {
         }
     }
 
+    /// Discards translations that have yet to start playing.
+    public func clearWaiting() {
+        state.withLock { state in clearWaiting(&state) }
+    }
+
     /// Forgets what is waiting and stops what is being spoken, without
     /// waiting for the sound to stop.
     public func cancelAll() {
@@ -89,10 +97,22 @@ public final class SpeechQueue: Sendable {
 
     private func cancel() -> Task<Void, Never>? {
         state.withLock { state in
-            state.waiting.removeAll()
+            clearWaiting(&state)
             state.current?.task.cancel()
             return state.current?.task
         }
+    }
+
+    private func clearWaiting(_ state: inout State) {
+        state.waiting.removeAll()
+        reportWaitingCount(&state)
+    }
+
+    private func reportWaitingCount(_ state: inout State) {
+        let count = state.waiting.count
+        guard count != state.reportedWaitingCount else { return }
+        state.reportedWaitingCount = count
+        continuation.yield(.waitingCount(count))
     }
 
     // MARK: Speaking
@@ -100,6 +120,7 @@ public final class SpeechQueue: Sendable {
     /// One phrase at a time: the next starts when the current one finishes,
     /// so a stopping phrase never overlaps the one after it.
     private func startNext(_ state: inout State) {
+        defer { reportWaitingCount(&state) }
         guard state.current == nil, !state.floorTaken, !state.waiting.isEmpty else { return }
         let item = state.waiting.removeFirst()
         let task = Task {

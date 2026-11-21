@@ -166,8 +166,10 @@ Off by default; the setting is remembered. When it is on:
   continue while the phone speaks. On speaker routes, the microphone
   sends silence through playback and for 300 ms afterward to avoid
   feeding translations back into the app.
-- **Backlog.** At most 2 phrases wait behind the one playing. Past that, the
-  oldest waiting phrase is not spoken. Its caption is unaffected.
+- **Backlog.** Finished translations wait in order for playback. Spoken
+  translations can lag behind the captions during fast speech. When five
+  or more are waiting, **Jump to Latest** clears the playback backlog.
+  The current phrase finishes, and new phrases can be spoken as they arrive.
 - **Stop.** Stop, turning speech off, or a phone call silences speech at once.
   Nothing more is said after Stop, even for translations that finish later.
 - **Failures.** If speech fails, a notice says so once per session. Captions

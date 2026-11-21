@@ -179,16 +179,16 @@ final class TranslationViewController: UIViewController {
         jump.cornerStyle = .capsule
         jump.buttonSize = .large
         jump.title = String(localized: "Jump to Latest")
-        jump.image = UIImage(systemName: "arrow.down")
+        jump.image = UIImage(systemName: "forward.end.fill")
         jump.imagePadding = 8
         jump.baseBackgroundColor = .secondarySystemBackground
         jump.baseForegroundColor = .label
         jumpButton.configuration = jump
+        jumpButton.accessibilityHint = String(localized: "Skips translations waiting to be spoken.")
         jumpButton.isHidden = true
         jumpButton.translatesAutoresizingMaskIntoConstraints = false
         jumpButton.addAction(UIAction { [weak self] _ in
-            self?.followsLatest = true
-            self?.scrollToLatest(animated: true)
+            self?.viewModel.jumpToLatestSpeech()
         }, for: .primaryActionTriggered)
     }
 
@@ -260,6 +260,7 @@ final class TranslationViewController: UIViewController {
             self.statusView.show(self.viewModel.status, speaking: speaking != nil)
         }
         viewModel.onSpeaksTranslationsChanged = { [weak self] _ in self?.renderSpeechToggle() }
+        viewModel.onSpeechQueueChanged = { [weak self] in self?.renderJumpButton() }
         viewModel.onLanguagesChanged = { [weak self] in self?.renderLanguages() }
         viewModel.onTranslationCompleted = { [weak self] phrase in
             // With speech on, the phone reads it out already.
@@ -302,8 +303,6 @@ final class TranslationViewController: UIViewController {
             guard let self else { return }
             if follow {
                 self.scrollToLatest(animated: animate)
-            } else if !changes.inserted.isEmpty {
-                self.jumpButton.isHidden = false
             }
             self.updateEmptyState()
         }
@@ -312,6 +311,7 @@ final class TranslationViewController: UIViewController {
     private func render(status: SessionStatus) {
         statusView.show(status, speaking: viewModel.speaking != nil)
         renderLanguages()
+        renderJumpButton()
         var configuration = startButton.configuration ?? .filled()
         if status.isRunning {
             configuration.title = String(localized: "Stop")
@@ -379,6 +379,11 @@ final class TranslationViewController: UIViewController {
         configuration.image = UIImage(systemName: on ? "speaker.wave.2.fill" : "speaker.slash.fill")
         speakButton.configuration = configuration
         speakButton.accessibilityValue = on ? String(localized: "On") : String(localized: "Off")
+        renderJumpButton()
+    }
+
+    private func renderJumpButton() {
+        jumpButton.isHidden = !viewModel.canJumpToLatestSpeech
     }
 
     private func updateEmptyState() {
@@ -386,7 +391,6 @@ final class TranslationViewController: UIViewController {
     }
 
     private func scrollToLatest(animated: Bool) {
-        jumpButton.isHidden = true
         let rows = tableView.numberOfRows(inSection: 0)
         guard tableView.numberOfSections > 0, rows > 0 else { return }
         tableView.scrollToRow(at: IndexPath(row: rows - 1, section: 0), at: .bottom, animated: animated)
@@ -548,7 +552,6 @@ extension TranslationViewController: UITableViewDelegate {
     private func updateFollowing(_ scrollView: UIScrollView) {
         let distanceFromBottom = scrollView.contentSize.height - scrollView.contentOffset.y - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
         followsLatest = distanceFromBottom < 40
-        if followsLatest { jumpButton.isHidden = true }
     }
 
     func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {

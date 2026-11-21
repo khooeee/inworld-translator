@@ -223,7 +223,7 @@ let consumer = Task {
                 collector.spoken.append(id)
                 print("  🔈 speaking \(id)")
             }
-        case .level:
+        case .level, .speechQueueDepth:
             break
         }
     }

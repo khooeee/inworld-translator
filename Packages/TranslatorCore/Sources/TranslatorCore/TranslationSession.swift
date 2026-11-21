@@ -11,6 +11,8 @@ public protocol TranslationSessionControlling: Sendable {
     func stop(notice: SessionNotice?) async
     /// Whether translations are spoken aloud. Off at first.
     func setSpeaksTranslations(_ enabled: Bool) async
+    /// Skips playback for earlier phrases that have yet to be spoken.
+    func clearQueuedSpeech() async
 }
 
 /// Runs a listening session: microphone audio in, translated phrases out.
@@ -208,6 +210,13 @@ public actor TranslationSession: TranslationSessionControlling {
             speechBacklog.removeAll()
             await speech.stop()
         }
+    }
+
+    public func clearQueuedSpeech() {
+        // Ignore earlier phrases even if their translations arrive after the
+        // queue is cleared. They still finish as captions.
+        speechBacklog.removeAll()
+        speech?.clearWaiting()
     }
 
     private func isCurrent(_ runID: Int) -> Bool {
@@ -773,6 +782,8 @@ public actor TranslationSession: TranslationSessionControlling {
             // Time spent talking is not silence.
             lastActivity = now()
             emit(.speaking(id))
+        case .waitingCount(let count):
+            emit(.speechQueueDepth(count))
         case .failed:
             guard !speechFailureNoticed else { return }
             speechFailureNoticed = true

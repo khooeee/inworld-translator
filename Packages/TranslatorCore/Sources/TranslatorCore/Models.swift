@@ -188,6 +188,7 @@ public enum SessionEvent: Sendable, Equatable {
     case level(Float)
     case notice(SessionNotice)
     /// This phrase's translation is being spoken aloud; nil once nothing is.
-    /// Listening is paused meanwhile, so the phone does not hear itself.
     case speaking(PhraseID?)
+    /// The number of finished translations waiting to be spoken.
+    case speechQueueDepth(Int)
 }

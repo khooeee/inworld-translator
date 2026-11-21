@@ -24,6 +24,7 @@ final class TranslationViewModel {
     /// Older phrases are dropped past this, so a long session stays bounded.
     nonisolated static let maxPhrases = 2000
     static let speaksTranslationsKey = "SpeaksTranslations"
+    private static let minimumSpeechQueueDepthForJump = 5
     static let sourceLanguageKey = "SourceLanguage"
     static let targetLanguageKey = "TargetLanguage"
     static let bidirectionalKey = "BidirectionalTranslation"
@@ -36,6 +37,7 @@ final class TranslationViewModel {
     var onTranslationCompleted: ((Phrase) -> Void)?
     var onSpeakingChanged: ((PhraseID?) -> Void)?
     var onSpeaksTranslationsChanged: ((Bool) -> Void)?
+    var onSpeechQueueChanged: (() -> Void)?
     var onLanguagesChanged: (() -> Void)?
 
     private(set) var phrases: [Phrase] = []
@@ -45,6 +47,8 @@ final class TranslationViewModel {
     private(set) var speaking: PhraseID?
     /// Whether translations are spoken aloud. Remembered between launches.
     private(set) var speaksTranslations: Bool
+    private var speechQueueDepth = 0
+    private var isClearingSpeechQueue = false
     private(set) var sourceLanguage: TranslationLanguage?
     private(set) var targetLanguage: TargetLanguage
     private var prefersBidirectional: Bool
@@ -81,6 +85,10 @@ final class TranslationViewModel {
     var canChangeLanguages: Bool { status == .idle }
     var canUseBidirectional: Bool { sourceLanguage != nil && sourceLanguage != targetLanguage }
     var isBidirectional: Bool { canUseBidirectional && prefersBidirectional }
+    var canJumpToLatestSpeech: Bool {
+        speaksTranslations && isRunning && !isClearingSpeechQueue
+            && speechQueueDepth >= Self.minimumSpeechQueueDepthForJump
+    }
 
     func phrase(for id: PhraseID) -> Phrase? {
         positions[id].map { phrases[$0] }
@@ -126,6 +134,13 @@ final class TranslationViewModel {
         defaults.set(enabled, forKey: Self.speaksTranslationsKey)
         onSpeaksTranslationsChanged?(enabled)
         Task { [session] in await session.setSpeaksTranslations(enabled) }
+    }
+
+    func jumpToLatestSpeech() {
+        guard canJumpToLatestSpeech else { return }
+        isClearingSpeechQueue = true
+        onSpeechQueueChanged?()
+        Task { [session] in await session.clearQueuedSpeech() }
     }
 
     func setSourceLanguage(_ language: TranslationLanguage?) {
@@ -221,6 +236,10 @@ final class TranslationViewModel {
             if !changed.isEmpty {
                 onPhrasesChanged?(PhraseChanges(updated: changed))
             }
+        case .speechQueueDepth(let count):
+            speechQueueDepth = count
+            if count == 0 { isClearingSpeechQueue = false }
+            onSpeechQueueChanged?()
         }
     }
 
