@@ -1,3 +1,4 @@
+import AVKit
 import TranslatorCore
 import UIKit
 import UniformTypeIdentifiers
@@ -19,6 +20,8 @@ final class TranslationViewController: UIViewController {
     private let jumpButton = UIButton(configuration: .filled())
     private let startButton = UIButton(configuration: .filled())
     private let speakButton = UIButton(configuration: .gray())
+    private let pictureInPicture = CaptionPictureInPicture.makeIfSupported()
+    private var pictureInPictureButton: UIBarButtonItem?
 
     private var dataSource: UITableViewDiffableDataSource<Int, PhraseID>!
     private var pendingExport: URL?
@@ -82,6 +85,23 @@ final class TranslationViewController: UIViewController {
         more.preferredMenuElementOrder = .fixed
         more.accessibilityLabel = String(localized: "More")
         navigationItem.rightBarButtonItem = more
+
+        guard let pictureInPicture else { return }
+        let pictureButton = UIBarButtonItem(image: AVPictureInPictureController.pictureInPictureButtonStartImage, primaryAction: UIAction { [weak self] _ in
+            guard let self, let pictureInPicture = self.pictureInPicture else { return }
+            self.updatePictureInPicture(pictureInPicture)
+            pictureInPicture.toggle()
+        })
+        pictureButton.accessibilityLabel = String(localized: "Start Picture in Picture")
+        pictureButton.isEnabled = false
+        pictureInPictureButton = pictureButton
+        navigationItem.rightBarButtonItems = [more, pictureButton]
+        pictureInPicture.onStateChanged = { [weak self] in self?.renderPictureInPictureButton() }
+        pictureInPicture.onStartFailed = { [weak self] in
+            guard let self, self.view.window?.windowScene?.activationState == .foregroundActive,
+                  self.presentedViewController == nil else { return }
+            self.showAlert(String(localized: "Picture in Picture Unavailable"), message: String(localized: "iOS couldn’t open the floating caption window."))
+        }
     }
 
     private func configureHeader() {
@@ -123,6 +143,7 @@ final class TranslationViewController: UIViewController {
         tableView.register(PhraseCell.self, forCellReuseIdentifier: PhraseCell.reuseIdentifier)
         tableView.delegate = self
         tableView.allowsSelection = false
+        tableView.backgroundColor = .systemBackground
         tableView.keyboardDismissMode = .onDrag
         tableView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -254,6 +275,21 @@ final class TranslationViewController: UIViewController {
             levelMeter.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
         tableView.cellLayoutMarginsFollowReadableWidth = true
+
+        if let source = pictureInPicture?.sourceView {
+            source.translatesAutoresizingMaskIntoConstraints = false
+            view.insertSubview(source, belowSubview: tableView)
+            let preferredWidth = source.widthAnchor.constraint(equalTo: readable.widthAnchor)
+            preferredWidth.priority = .defaultHigh
+            NSLayoutConstraint.activate([
+                source.centerXAnchor.constraint(equalTo: readable.centerXAnchor),
+                source.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
+                source.widthAnchor.constraint(lessThanOrEqualTo: readable.widthAnchor),
+                source.heightAnchor.constraint(lessThanOrEqualTo: tableView.heightAnchor),
+                source.widthAnchor.constraint(equalTo: source.heightAnchor, multiplier: CaptionFrame.aspectRatio),
+                preferredWidth,
+            ])
+        }
     }
 
     // MARK: View model
@@ -291,6 +327,7 @@ final class TranslationViewController: UIViewController {
     }
 
     private func apply(_ changes: TranslationViewModel.PhraseChanges) {
+        if let pictureInPicture, pictureInPicture.isEngaged { updatePictureInPicture(pictureInPicture) }
         var snapshot = dataSource.snapshot()
         let structureChanged = !changes.inserted.isEmpty || !changes.removed.isEmpty
         if structureChanged || snapshot.numberOfSections == 0 {
@@ -320,6 +357,14 @@ final class TranslationViewController: UIViewController {
         statusView.show(status, speaking: viewModel.speaking != nil)
         renderLanguages()
         renderJumpButton()
+        if let pictureInPicture, pictureInPicture.isEngaged {
+            if status.isRunning {
+                updatePictureInPicture(pictureInPicture)
+            } else {
+                pictureInPicture.stop()
+            }
+        }
+        renderPictureInPictureButton()
         var configuration = startButton.configuration ?? .filled()
         if status.isRunning {
             configuration.title = String(localized: "Stop")
@@ -394,6 +439,31 @@ final class TranslationViewController: UIViewController {
         jumpButton.isHidden = !viewModel.canJumpToLatestSpeech
     }
 
+    private func updatePictureInPicture(_ pictureInPicture: CaptionPictureInPicture) {
+        pictureInPicture.update(phrases: viewModel.phrases, speaking: viewModel.speaking,
+                                emptyText: ConnectionStatusView.describe(viewModel.status).0)
+    }
+
+    private func renderPictureInPictureButton() {
+        guard let pictureInPicture, let button = pictureInPictureButton else { return }
+        if pictureInPicture.isEngaged {
+            button.image = AVPictureInPictureController.pictureInPictureButtonStopImage
+            button.accessibilityLabel = String(localized: "Stop Picture in Picture")
+            button.isEnabled = true
+        } else {
+            button.image = AVPictureInPictureController.pictureInPictureButtonStartImage
+            button.accessibilityLabel = String(localized: "Start Picture in Picture")
+            let status = viewModel.status
+            button.isEnabled = status.isRunning && status != .starting && status != .interrupted
+        }
+        // Show the video inline during the system's transition to the floating window.
+        if pictureInPicture.showsPreview {
+            view.insertSubview(pictureInPicture.sourceView, aboveSubview: tableView)
+        } else {
+            view.insertSubview(pictureInPicture.sourceView, belowSubview: tableView)
+        }
+    }
+
     private func updateEmptyState() {
         tableView.backgroundView = viewModel.phrases.isEmpty ? emptyLabel : nil
     }
@@ -409,6 +479,12 @@ final class TranslationViewController: UIViewController {
         UIPasteboard.general.string = text
         UIAccessibility.post(notification: .announcement, argument: String(localized: "Copied"))
     }
+
+    private func showAlert(_ title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .default))
+        present(alert, animated: true)
+    }
 }
 
 // MARK: - Conversation files
@@ -417,7 +493,7 @@ extension TranslationViewController: UIDocumentPickerDelegate, UIAdaptivePresent
     private func saveConversation() {
         let archive = ConversationArchive(phrases: viewModel.phrases)
         guard !archive.isEmpty else {
-            showFileAlert(String(localized: "Nothing to Save"), message: String(localized: "A conversation needs at least one finalized caption."))
+            showAlert(String(localized: "Nothing to Save"), message: String(localized: "A conversation needs at least one finalized caption."))
             return
         }
         do {
@@ -428,7 +504,7 @@ extension TranslationViewController: UIDocumentPickerDelegate, UIAdaptivePresent
             picker.presentationController?.delegate = self
             present(picker, animated: true)
         } catch {
-            showFileAlert(String(localized: "Couldn’t Save Conversation"), message: String(localized: "The conversation file couldn’t be created."))
+            showAlert(String(localized: "Couldn’t Save Conversation"), message: String(localized: "The conversation file couldn’t be created."))
         }
     }
 
@@ -489,9 +565,9 @@ extension TranslationViewController: UIDocumentPickerDelegate, UIAdaptivePresent
             case .success(let archive):
                 self.confirmLoading(archive)
             case .failure(ConversationArchive.FileError.unsupportedVersion):
-                self.showFileAlert(String(localized: "Couldn’t Load Conversation"), message: String(localized: "This version of the conversation file isn’t supported."))
+                self.showAlert(String(localized: "Couldn’t Load Conversation"), message: String(localized: "This version of the conversation file isn’t supported."))
             case .failure:
-                self.showFileAlert(String(localized: "Couldn’t Load Conversation"), message: String(localized: "Choose a valid conversation file saved by Translator."))
+                self.showAlert(String(localized: "Couldn’t Load Conversation"), message: String(localized: "Choose a valid conversation file saved by Translator."))
             }
         }
     }
@@ -527,13 +603,7 @@ extension TranslationViewController: UIDocumentPickerDelegate, UIAdaptivePresent
     }
 
     private func showMustStopAlert() {
-        showFileAlert(String(localized: "Stop Before Loading"), message: String(localized: "Stop listening and wait for the last captions to finish before loading a conversation."))
-    }
-
-    private func showFileAlert(_ title: String, message: String) {
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .default))
-        present(alert, animated: true)
+        showAlert(String(localized: "Stop Before Loading"), message: String(localized: "Stop listening and wait for the last captions to finish before loading a conversation."))
     }
 }
 
