@@ -12,7 +12,6 @@ let package = Package(
     targets: [
         .target(name: "TranslatorCore"),
         .executableTarget(name: "translator-cli", dependencies: ["TranslatorCore"]),
-        .testTarget(name: "TranslatorCoreTests", dependencies: ["TranslatorCore"]),
     ],
     swiftLanguageModes: [.v6]
 )

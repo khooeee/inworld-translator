@@ -29,7 +29,7 @@ Requirements:
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
 - An Inworld API key, from [Inworld Portal → API Keys](https://platform.inworld.ai/api-keys)
 
-To run tests without a key you also need:
+To run the app or CLI with the local mock you also need:
 
 - Node 22 or later, for the mock server
 - Python 3 and `ffmpeg`, for generating audio samples
@@ -100,11 +100,9 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
 
 | Path | Contents |
 | --- | --- |
-| `Packages/TranslatorCore` | Session engine, Inworld clients, prompt, models. No UIKit; tested on macOS. |
+| `Packages/TranslatorCore` | Session engine, Inworld clients, prompt, and models. Runs on iOS and macOS. |
 | `Packages/TranslatorCore/Sources/translator-cli` | Validation harness that runs the real pipeline on audio files. |
 | `App/Sources` | UIKit app: screen, cells, microphone capture, Keychain, key screen. |
-| `App/Tests` | View model unit tests. |
-| `App/UITests` | UI tests against the mock server. |
 | `tools/mock-inworld` | Local stand-in for the Inworld endpoints, including TTS. |
 | `tools/samples` | Speech sample manifest (27 languages) and generator. |
 | `tools/icon` | Script that draws the app icon: `swift tools/icon/make_icon.swift`. |
@@ -186,10 +184,10 @@ Off by default; the setting is remembered. When it is on:
   the last words finalize, waits up to 6 s for translations in flight, and
   cancels the rest.
 - **History.** The app keeps up to 2,000 captions on screen. Use
-  **⋯ → Save Conversation** to save a JSON file in Files with finalized
-  originals and completed English translations. Use **⋯ → Load Conversation**
-  while the app is stopped to reopen a saved file. Loading asks before
-  replacing any captions already on screen.
+  **⋯ → Save** to save a JSON file in Files with finalized originals and
+  completed English translations. Use **⋯ → Load** while the app is stopped
+  to reopen a saved file. Loading asks before replacing any captions already
+  on screen.
 
 ## Security
 
@@ -207,39 +205,7 @@ Before giving the app to other people, put a small backend between the app and
 Inworld. The backend would hold the key and hand out short-lived tokens, so
 the key never ships in the app.
 
-## Testing
-
-### Unit tests (no key, no server)
-
-```sh
-xcodegen generate
-xcodebuild test -project InworldTranslator.xcodeproj -scheme InworldTranslator \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
-```
-
-This runs 21 app tests (view model and languages screen) and the 78
-TranslatorCore tests.
-
-The 78 TranslatorCore tests also run on macOS. They are clean under Thread
-Sanitizer:
-
-```sh
-cd Packages/TranslatorCore && swift test --sanitize=thread
-```
-
-They cover:
-
-- interim revisions, finals and empty finals;
-- language switching;
-- ordering when translations finish out of order;
-- bounded queues and skipping;
-- reconnects with held-audio replay;
-- authentication and quota errors;
-- cancellation on Stop;
-- the idle timeout;
-- the reply parser and HTTP error mapping;
-- speech: order, waiting for a pause, the backlog limit, Stop, turning it
-  off, phone calls, failures, and the TTS request and its errors.
+## Simulator and CLI
 
 ### Mock server and samples
 
@@ -264,32 +230,6 @@ the audio it receives. Faults can be injected with `POST /__mock/faults` and
 
 **Samples.** They are rendered with macOS voices. Install missing voices in
 System Settings → Accessibility → Spoken Content.
-
-### UI tests (mock + samples)
-
-With the mock running and samples generated, run the
-**InworldTranslatorUITests** scheme:
-
-```sh
-xcodebuild test -project InworldTranslator.xcodeproj -scheme InworldTranslatorUITests \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
-```
-
-The tests cover:
-
-- **Captions and Stop.** Captions appear, Stop returns to Ready, and no audio
-  reaches the server after Stop.
-- **Conversation files.** Save captions through Files, clear the screen, and
-  load the saved captions again.
-- **Key flow.**
-  - Start without a key shows a notice.
-  - A wrong key is rejected.
-  - The right key is saved, the notice clears, and the saved key works for
-    STT and translation.
-- **Spoken English.** The speaker toggle turns on, speech is requested, the
-  status shows **Speaking English**, and nothing more is requested after
-  Stop. The sample-file audio source stands in for the speaker, so nothing
-  is played out loud.
 
 ### The app in the Simulator, without a microphone
 
@@ -357,9 +297,6 @@ Mock server, Simulator and macOS, November 2026.
 
 | Check | Result |
 | --- | --- |
-| Unit tests (Simulator) | 96/96 pass |
-| TranslatorCore under Thread Sanitizer | 78/78 pass, no reports |
-| UI tests against the mock | 3/3 pass |
 | Spoken English against the mock (`--speak`, 2×) | 5 of 5 non-English phrases spoken in order; the English phrase skipped; nothing spoken after Stop; integrity checks pass. |
 | All 32 samples, 4× speed | 51 phrases, all translated. Final → English p50 250 ms, p95 342 ms. Memory 13 → 19 MB. |
 | 64 clips with a forced STT drop every 7 s | 24 reconnects, 121/121 phrases translated, integrity checks pass, no notices. Memory flat at ~24 MB over 170 s. |

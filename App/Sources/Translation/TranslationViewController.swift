@@ -52,24 +52,25 @@ final class TranslationViewController: UIViewController {
     }
 
     private func configureNavigationItems() {
-        let copyAll = UIAction(title: String(localized: "Copy Conversation"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-            guard let self else { return }
-            self.copy(self.viewModel.transcript())
+        let newConversation = UIAction(title: String(localized: "New"), image: UIImage(systemName: "doc.badge.plus")) { [weak self] _ in
+            self?.viewModel.clear()
         }
-        let save = UIAction(title: String(localized: "Save Conversation"), image: UIImage(systemName: "square.and.arrow.down")) { [weak self] _ in
-            self?.saveConversation()
-        }
-        let load = UIAction(title: String(localized: "Load Conversation"), image: UIImage(systemName: "folder")) { [weak self] _ in
+        let load = UIAction(title: String(localized: "Load"), image: UIImage(systemName: "folder")) { [weak self] _ in
             self?.chooseConversationFile()
         }
-        let clear = UIAction(title: String(localized: "Clear Conversation"), image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
-            self?.viewModel.clear()
+        let save = UIAction(title: String(localized: "Save"), image: UIImage(systemName: "square.and.arrow.down")) { [weak self] _ in
+            self?.saveConversation()
+        }
+        let copyAll = UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+            guard let self else { return }
+            self.copy(self.viewModel.transcript())
         }
         let languages = UIAction(title: String(localized: "Supported Languages"), image: UIImage(systemName: "globe")) { [weak self] _ in
             self?.navigationController?.pushViewController(SupportedLanguagesViewController(), animated: true)
         }
-        let conversation = UIMenu(options: .displayInline, children: [copyAll, save, load, clear])
+        let conversation = UIMenu(options: .displayInline, children: [newConversation, load, save, copyAll])
         let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), menu: UIMenu(children: [conversation, languages]))
+        more.preferredMenuElementOrder = .fixed
         more.accessibilityLabel = String(localized: "More")
         let settings = UIBarButtonItem(image: UIImage(systemName: "key"), primaryAction: UIAction { [weak self] _ in
             self?.openAPIKeySettings()
