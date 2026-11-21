@@ -131,8 +131,10 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
 
 - **Partials.** Interim transcripts revise one provisional phrase in place.
   The final transcript commits it once and sends it for translation.
-- **Context.** Each request carries the three previous phrases for context,
-  with any available translations in the selected target language.
+- **Context.** One-way translation uses the previous three phrases and any
+  available translations in the current target language. Two-way mode
+  reads each phrase independently and sends a fixed direction to Inworld
+  when the transcript's language is clear.
 - **Faithful only.** The phrase is sent as JSON data. The system prompt
   gives the target language and tells the model to translate questions
   and commands as spoken.

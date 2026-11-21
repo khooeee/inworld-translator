@@ -49,12 +49,13 @@ final class PhraseCell: UITableViewCell {
         let spokenInTargetLanguage = phrase.isSpokenInTargetLanguage
         let targetName = phrase.targetLanguage.name()
         let outsideLanguagePair = phrase.translation == .unavailable(.outsideLanguagePair)
+        let showsOnlySource = spokenInTargetLanguage || outsideLanguagePair
 
         var header: [String] = []
         if phrase.sourceState == .provisional {
             header.append(String(localized: "Listening…"))
         } else if let sourceName = Self.languageName(phrase.languageCode) {
-            header.append(spokenInTargetLanguage || outsideLanguagePair ? sourceName : String(localized: "\(sourceName) → \(targetName)"))
+            header.append(showsOnlySource ? sourceName : String(localized: "\(sourceName) → \(targetName)"))
         } else if phrase.translation != .pending, !outsideLanguagePair {
             header.append(String(localized: "To \(targetName)"))
         }
@@ -74,13 +75,13 @@ final class PhraseCell: UITableViewCell {
             sourceLabel.font = Self.font(.body, italic: true)
             sourceLabel.textColor = .tertiaryLabel
         case .final, .interrupted:
-            sourceLabel.font = Self.font(spokenInTargetLanguage ? .title3 : .body, weight: spokenInTargetLanguage ? .semibold : .regular)
-            sourceLabel.textColor = spokenInTargetLanguage ? .label : .secondaryLabel
+            sourceLabel.font = Self.font(showsOnlySource ? .title3 : .body, weight: showsOnlySource ? .semibold : .regular)
+            sourceLabel.textColor = showsOnlySource ? .label : .secondaryLabel
         }
 
         // Translation.
         translationLabel.font = Self.font(.title3, weight: .semibold)
-        translationLabel.isHidden = spokenInTargetLanguage
+        translationLabel.isHidden = showsOnlySource
         switch phrase.translation {
         case .none:
             translationLabel.isHidden = true

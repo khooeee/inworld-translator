@@ -175,12 +175,15 @@ public actor TranslationPipeline {
 
     /// Earlier phrases, with any translations in the request's target language.
     private func context(before job: Job) -> [TranslationContextItem] {
-        history
+        // A previous turn can point in the opposite direction. Route and
+        // translate each two-way phrase on its own.
+        guard !job.bidirectional else { return [] }
+        return history
             .filter { $0.job.id < job.id }
             .suffix(configuration.contextSize)
             .map { entry in
                 let previous = entry.job
-                let sameTarget = !job.bidirectional && !previous.bidirectional && previous.targetLanguage == job.targetLanguage
+                let sameTarget = !previous.bidirectional && previous.targetLanguage == job.targetLanguage
                 return TranslationContextItem(
                     source: previous.text,
                     translation: sameTarget ? entry.translation : nil
@@ -198,21 +201,31 @@ public actor TranslationPipeline {
         configuration: Configuration,
         progress: @escaping @Sendable (Update.Kind) -> Void
     ) async -> Update.Kind {
-        let selectedLanguage = request.bidirectional ? nil : request.sourceLanguage?.rawValue
+        var nextRequest = request
+        if request.bidirectional, let first = request.sourceLanguage,
+           let source = TranscriptLanguage.source(in: request.text, between: first, and: request.targetLanguage),
+           let routed = request.fixedDirection(from: source.rawValue) {
+            nextRequest = routed
+        }
         var attempt = 1
         while true {
+            let activeRequest = nextRequest
+            let selectedLanguage = activeRequest.bidirectional ? nil : activeRequest.sourceLanguage?.rawValue
             progress(.pending)
+            if request.bidirectional, let selectedLanguage {
+                progress(.language(selectedLanguage, targetLanguage: activeRequest.targetLanguage))
+            }
             do {
                 let (translation, language) = try await withTimeout(configuration.requestTimeout) {
                     var language: String?
                     var text = ""
-                    for try await update in translator.translate(request) {
+                    for try await update in translator.translate(activeRequest) {
                         switch update {
                         case .language(let code):
                             if selectedLanguage == nil {
                                 language = code
-                                if request.bidirectional {
-                                    if let target = request.destination(for: code) {
+                                if activeRequest.bidirectional {
+                                    if let target = activeRequest.destination(for: code) {
                                         progress(.language(code, targetLanguage: target))
                                     }
                                 } else {
@@ -221,7 +234,7 @@ public actor TranslationPipeline {
                             }
                         case .delta(let delta):
                             text += delta
-                            if !request.bidirectional || request.destination(for: language) != nil {
+                            if !activeRequest.bidirectional || activeRequest.destination(for: language) != nil {
                                 progress(.partial(text))
                             }
                         case .usage:
@@ -233,12 +246,17 @@ public actor TranslationPipeline {
                     try Task.checkCancellation()
                     throw ServiceError.invalidResponse
                 }
-                guard let target = request.destination(for: language) else {
+                guard let target = activeRequest.destination(for: language) else {
                     return .unavailable(.outsideLanguagePair, error: nil)
                 }
                 let trimmed = translation.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty {
                     return .unavailable(.unintelligible, error: nil)
+                }
+                if let routed = request.fixedDirection(from: language), let source = routed.sourceLanguage,
+                   TranscriptLanguage.clearlyMatches(source, text: trimmed) {
+                    nextRequest = routed
+                    throw ServiceError.invalidResponse
                 }
                 return .completed(trimmed, language: language, targetLanguage: request.bidirectional ? target : nil)
             } catch {

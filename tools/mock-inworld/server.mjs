@@ -91,7 +91,7 @@ export async function startMockInworld({
       else if (language !== reverseLanguage) return `${language}\n`;
     }
     if (targetLanguage !== 'en') {
-      const text = language === targetLanguage ? phrase : `[mock ${targetLanguage}] ${phrase}`;
+      const text = language === targetLanguage ? phrase : `[mock ${targetLanguage}]`;
       return `${language}\n${text}`;
     }
     if (line) return `${line.language}\n${line.english}`;

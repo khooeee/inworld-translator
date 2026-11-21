@@ -30,7 +30,7 @@ enum TranslationPrompt {
             languageLine = "the selected source language code, \(source.rawValue)."
             let instruction = source == target
                 ? "Return the source apart from obvious capitalization and punctuation fixes."
-                : "Translate from \(sourceName) into \(name)."
+                : "Translate from \(sourceName) into \(name). Line 2 must be written in \(name), even if the source is short."
             interpretation = "Interpret \"phrase\" as \(sourceName), including recognizable phonetic spellings. \(instruction)"
         } else {
             languageLine = detection
@@ -157,7 +157,8 @@ struct TranslationReplyParser {
         if headerDone { return emit(chunk) }
 
         buffer += chunk
-        guard let newline = buffer.firstIndex(of: "\n") else {
+        buffer = String(buffer.drop(while: \.isWhitespace))
+        guard let newline = buffer.firstIndex(where: \.isNewline) else {
             // Still inside line 1. Keep buffering while it could be a language code.
             if buffer.count <= Self.maxLanguageLineLength { return "" }
             return finishHeader(firstLine: "", rest: buffer)
@@ -205,7 +206,7 @@ struct TranslationReplyParser {
 
     /// A line holding only a language tag such as "es", "yue" or "pt-BR".
     private static func languageCode(in line: String) -> String? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = trimmed.split(separator: "-", omittingEmptySubsequences: false)
         guard
             let primary = parts.first, parts.count <= 2,

@@ -213,6 +213,12 @@ public struct TranslationRequest: Sendable, Equatable {
         if targetLanguage.matches(languageCode) { return sourceLanguage }
         return nil
     }
+
+    func fixedDirection(from languageCode: String?) -> TranslationRequest? {
+        guard bidirectional, let sourceLanguage, let destination = destination(for: languageCode) else { return nil }
+        let source = destination == targetLanguage ? sourceLanguage : targetLanguage
+        return TranslationRequest(text: text, context: context, sourceLanguage: source, targetLanguage: destination)
+    }
 }
 
 public enum TranslationUpdate: Sendable, Equatable {
