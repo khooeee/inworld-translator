@@ -6,9 +6,8 @@ enum STTWire {
     static let endTurn = #"{"endTurn":{}}"#
     static let closeStream = #"{"closeStream":{}}"#
 
-    /// The first message on a connection. `language` is deliberately left out:
-    /// without a hint the service detects the spoken language and follows it
-    /// when the speaker switches.
+    /// The first message on a connection. Omitting `language` lets the
+    /// service detect the spoken language without a hint.
     static func configMessage(modelID: String, configuration: STTConfiguration) throws -> String {
         var tuning: TranscribeConfig.InworldSTTV1Config?
         if configuration.minEndOfTurnSilenceMilliseconds != nil || configuration.maxTurnSilenceMilliseconds != nil {
@@ -21,6 +20,7 @@ enum STTWire {
             transcribeConfig: .init(
                 modelId: modelID,
                 audioEncoding: "LINEAR16",
+                language: configuration.languageHint?.rawValue,
                 sampleRateHertz: configuration.sampleRate,
                 numberOfChannels: 1,
                 endOfTurnConfidenceThreshold: configuration.endOfTurnConfidenceThreshold,
@@ -77,6 +77,7 @@ enum STTWire {
 
         let modelId: String
         let audioEncoding: String
+        let language: String?
         let sampleRateHertz: Int
         let numberOfChannels: Int
         let endOfTurnConfidenceThreshold: Double?

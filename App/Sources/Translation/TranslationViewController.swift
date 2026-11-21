@@ -2,7 +2,7 @@ import TranslatorCore
 import UIKit
 import UniformTypeIdentifiers
 
-/// Target language, connection status, and microphone level above the
+/// Language choices, connection status, and microphone level above the
 /// conversation, with listening and speech controls at the bottom.
 final class TranslationViewController: UIViewController {
     private let viewModel: TranslationViewModel
@@ -11,6 +11,7 @@ final class TranslationViewController: UIViewController {
     private let statusView = ConnectionStatusView()
     private let levelMeter = LevelMeterView()
     private let headerStack = UIStackView()
+    private let sourceButton = UIButton(configuration: .tinted())
     private let targetButton = UIButton(configuration: .tinted())
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let emptyLabel = UILabel()
@@ -76,19 +77,8 @@ final class TranslationViewController: UIViewController {
     }
 
     private func configureHeader() {
-        targetButton.configuration?.cornerStyle = .capsule
-        targetButton.configuration?.image = UIImage(systemName: "chevron.down")
-        targetButton.configuration?.imagePlacement = .trailing
-        targetButton.configuration?.imagePadding = 8
-        targetButton.translatesAutoresizingMaskIntoConstraints = false
-        targetButton.accessibilityLabel = String(localized: "Translate to")
-        targetButton.addAction(UIAction { [weak self] _ in
-            guard let self, self.viewModel.canChangeTargetLanguage else { return }
-            let picker = TargetLanguagePickerViewController(current: self.viewModel.targetLanguage) { [weak self] language in
-                self?.viewModel.setTargetLanguage(language)
-            }
-            self.navigationController?.pushViewController(picker, animated: true)
-        }, for: .primaryActionTriggered)
+        configureLanguageButton(sourceButton, mode: .source)
+        configureLanguageButton(targetButton, mode: .target)
 
         headerStack.addArrangedSubview(statusView)
         headerStack.addArrangedSubview(levelMeter)
@@ -100,6 +90,28 @@ final class TranslationViewController: UIViewController {
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
             self.updateHeaderAxis()
         }
+    }
+
+    private func configureLanguageButton(_ button: UIButton, mode: LanguagePickerViewController.Mode) {
+        button.configuration?.cornerStyle = .capsule
+        button.configuration?.image = UIImage(systemName: "chevron.down")
+        button.configuration?.imagePlacement = .trailing
+        button.configuration?.imagePadding = 8
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = mode.title
+        button.addAction(UIAction { [weak self] _ in
+            guard let self, self.viewModel.canChangeLanguages else { return }
+            let current = mode == .source ? self.viewModel.sourceLanguage : self.viewModel.targetLanguage
+            let picker = LanguagePickerViewController(mode: mode, current: current) { [weak self] language in
+                switch mode {
+                case .source:
+                    self?.viewModel.setSourceLanguage(language)
+                case .target:
+                    if let language { self?.viewModel.setTargetLanguage(language) }
+                }
+            }
+            self.navigationController?.pushViewController(picker, animated: true)
+        }, for: .primaryActionTriggered)
     }
 
     /// At accessibility text sizes the status needs the full width.
@@ -198,6 +210,7 @@ final class TranslationViewController: UIViewController {
         bottomStack.spacing = 12
         bottomStack.translatesAutoresizingMaskIntoConstraints = false
 
+        view.addSubview(sourceButton)
         view.addSubview(targetButton)
         view.addSubview(headerStack)
         view.addSubview(tableView)
@@ -207,7 +220,12 @@ final class TranslationViewController: UIViewController {
         let margins = view.layoutMarginsGuide
         let readable = view.readableContentGuide
         NSLayoutConstraint.activate([
-            targetButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            sourceButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            sourceButton.leadingAnchor.constraint(equalTo: readable.leadingAnchor),
+            sourceButton.trailingAnchor.constraint(lessThanOrEqualTo: readable.trailingAnchor),
+            sourceButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+
+            targetButton.topAnchor.constraint(equalTo: sourceButton.bottomAnchor, constant: 4),
             targetButton.leadingAnchor.constraint(equalTo: readable.leadingAnchor),
             targetButton.trailingAnchor.constraint(lessThanOrEqualTo: readable.trailingAnchor),
             targetButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
@@ -245,7 +263,7 @@ final class TranslationViewController: UIViewController {
             self.statusView.show(self.viewModel.status, speaking: speaking != nil)
         }
         viewModel.onSpeaksTranslationsChanged = { [weak self] _ in self?.renderSpeechToggle() }
-        viewModel.onTargetLanguageChanged = { [weak self] in self?.renderTargetLanguage() }
+        viewModel.onLanguagesChanged = { [weak self] in self?.renderLanguages() }
         viewModel.onTranslationCompleted = { [weak self] phrase in
             // With speech on, the phone reads it out already.
             guard UIAccessibility.isVoiceOverRunning, self?.viewModel.speaksTranslations == false,
@@ -262,7 +280,7 @@ final class TranslationViewController: UIViewController {
         // starting at launch.
         render(status: viewModel.status)
         render(notice: viewModel.notice)
-        renderTargetLanguage()
+        renderLanguages()
         renderSpeechToggle()
         apply(TranslationViewModel.PhraseChanges(inserted: viewModel.phrases.map(\.id)))
     }
@@ -297,7 +315,8 @@ final class TranslationViewController: UIViewController {
 
     private func render(status: SessionStatus) {
         statusView.show(status, speaking: viewModel.speaking != nil)
-        targetButton.isEnabled = viewModel.canChangeTargetLanguage
+        sourceButton.isEnabled = viewModel.canChangeLanguages
+        targetButton.isEnabled = viewModel.canChangeLanguages
         var configuration = startButton.configuration ?? .filled()
         if status.isRunning {
             configuration.title = String(localized: "Stop")
@@ -334,10 +353,13 @@ final class TranslationViewController: UIViewController {
         }
     }
 
-    private func renderTargetLanguage() {
-        let language = viewModel.targetLanguage.name()
-        targetButton.configuration?.title = String(localized: "Translate to · \(language)")
-        targetButton.accessibilityValue = language
+    private func renderLanguages() {
+        let source = viewModel.sourceLanguage?.name() ?? LanguagePickerViewController.autoDetectTitle
+        sourceButton.configuration?.title = String(localized: "Translate from · \(source)")
+        sourceButton.accessibilityValue = source
+        let target = viewModel.targetLanguage.name()
+        targetButton.configuration?.title = String(localized: "Translate to · \(target)")
+        targetButton.accessibilityValue = target
     }
 
     private func renderSpeechToggle() {

@@ -44,6 +44,7 @@ public actor TranslationPipeline {
     private struct Job {
         let id: PhraseID
         let text: String
+        let sourceLanguage: TranslationLanguage?
         let targetLanguage: TargetLanguage
     }
 
@@ -72,8 +73,13 @@ public actor TranslationPipeline {
     }
 
     /// Queues a finalized phrase for translation.
-    public func submit(id: PhraseID, text: String, targetLanguage: TargetLanguage = .english) {
-        let job = Job(id: id, text: text, targetLanguage: targetLanguage)
+    public func submit(
+        id: PhraseID,
+        text: String,
+        sourceLanguage: TranslationLanguage? = nil,
+        targetLanguage: TargetLanguage = .english
+    ) {
+        let job = Job(id: id, text: text, sourceLanguage: sourceLanguage, targetLanguage: targetLanguage)
         history.append(HistoryEntry(job: job, translation: nil))
         let historyLimit = configuration.contextSize + configuration.maxConcurrent + configuration.maxWaiting + 1
         if history.count > historyLimit {
@@ -120,7 +126,12 @@ public actor TranslationPipeline {
     private func startWaitingJobs() {
         while running.count < configuration.maxConcurrent, !waiting.isEmpty {
             let job = waiting.removeFirst()
-            let request = TranslationRequest(text: job.text, context: context(before: job), targetLanguage: job.targetLanguage)
+            let request = TranslationRequest(
+                text: job.text,
+                context: context(before: job),
+                sourceLanguage: job.sourceLanguage,
+                targetLanguage: job.targetLanguage
+            )
             running[job.id] = Task { [translator, configuration, continuation] in
                 let outcome = await Self.run(request, translator: translator, configuration: configuration) { kind in
                     continuation.yield(Update(id: job.id, kind: kind))
@@ -176,6 +187,7 @@ public actor TranslationPipeline {
         configuration: Configuration,
         progress: @escaping @Sendable (Update.Kind) -> Void
     ) async -> Update.Kind {
+        let selectedLanguage = request.sourceLanguage?.rawValue
         var attempt = 1
         while true {
             progress(.pending)
@@ -186,15 +198,17 @@ public actor TranslationPipeline {
                     for try await update in translator.translate(request) {
                         switch update {
                         case .language(let code):
-                            language = code
-                            progress(.language(code))
+                            if selectedLanguage == nil {
+                                language = code
+                                progress(.language(code))
+                            }
                         case .delta(let delta):
                             text += delta
                             progress(.partial(text))
                         case .usage:
                             break
                         case .completed(let translation, let finalLanguage):
-                            return (translation, finalLanguage ?? language)
+                            return (translation, selectedLanguage ?? finalLanguage ?? language)
                         }
                     }
                     try Task.checkCancellation()

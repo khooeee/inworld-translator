@@ -2,19 +2,39 @@ import Foundation
 
 /// The instructions given to the language model, and the parser for its reply.
 enum TranslationPrompt {
-    private static func system(for target: TargetLanguage) -> String {
-        let name = target == .chinese ? "Mandarin Chinese" : target.name(in: Locale(identifier: "en"))
+    private static func languageName(_ language: TranslationLanguage) -> String {
+        language == .chinese ? "Mandarin Chinese" : language.name(in: Locale(identifier: "en"))
+    }
+
+    private static func system(for request: TranslationRequest) -> String {
+        let target = request.targetLanguage
+        let name = languageName(target)
         let namesRule = target == .english ? "write them in Latin script" : "transliterate them when customary in the target language"
+        let languageLine: String
+        let interpretation: String
+        if let source = request.sourceLanguage {
+            let sourceName = languageName(source)
+            languageLine = "the selected source language code, \(source.rawValue)."
+            let instruction = source == target
+                ? "Return the source apart from obvious capitalization and punctuation fixes."
+                : "Translate from \(sourceName) into \(name)."
+            interpretation = "Interpret \"phrase\" as \(sourceName), including recognizable phonetic spellings. \(instruction)"
+        } else {
+            languageLine = "the ISO 639 code of the main language of \"phrase\" (for example es, ja, en, yue), or und if it cannot be determined. Use zh for Mandarin Chinese and yue for Cantonese."
+            interpretation = "If \"phrase\" is already in \(name), return it unchanged apart from obvious capitalization and punctuation fixes."
+        }
+        let emptyLanguage = request.sourceLanguage?.rawValue ?? "und"
         return """
         You are the translation engine of a live-captioning app. Translate automatically recognized speech into \(name) (\(target.rawValue)).
 
         Each input is a JSON object:
         - "phrase": the transcript segment to translate. It can be in any language, can mix languages, can be a sentence fragment, and can contain recognition errors.
         - "context": earlier segments of the same conversation, oldest first. Reference only.
+        - "sourceLanguage": the selected source language code, when provided. Auto-detect the source when this field is absent.
         - "targetLanguage": the app's selected target language code.
 
         Reply with exactly two lines and nothing else:
-        Line 1: the ISO 639 code of the main language of "phrase" (for example es, ja, en, yue), or und if it cannot be determined. Use zh for Mandarin Chinese and yue for Cantonese.
+        Line 1: \(languageLine)
         Line 2: the \(name) translation of "phrase".
 
         Rules:
@@ -23,8 +43,8 @@ enum TranslationPrompt {
         - Be faithful. Keep the meaning, tone, and register. Do not add, omit, soften, censor, explain, or comment. Give one translation, with no notes and no surrounding quotation marks.
         - Keep names, numbers, dates, amounts, and units exact. Do not translate personal names; \(namesRule).
         - If "phrase" is a fragment, translate it as a fragment. Do not complete it.
-        - If "phrase" is already in \(name), return it unchanged apart from obvious capitalization and punctuation fixes.
-        - If "phrase" is unintelligible or has no translatable words, write und on line 1 and leave line 2 empty.
+        - \(interpretation)
+        - If "phrase" is unintelligible or has no translatable words in the source language, write \(emptyLanguage) on line 1 and leave line 2 empty.
         """
     }
 
@@ -64,8 +84,8 @@ enum TranslationPrompt {
     /// The phrase travels as a JSON string inside the user message, so
     /// whatever was said stays data and cannot pose as instructions.
     static func messages(for request: TranslationRequest) -> [Message] {
-        var messages = [Message(role: "system", content: system(for: request.targetLanguage))]
-        if request.targetLanguage == .english {
+        var messages = [Message(role: "system", content: system(for: request))]
+        if request.targetLanguage == .english, request.sourceLanguage == nil {
             for example in examples {
                 messages.append(Message(role: "user", content: envelope(example.input)))
                 messages.append(Message(role: "assistant", content: example.output))
@@ -84,13 +104,19 @@ enum TranslationPrompt {
     private struct Envelope: Encodable {
         let context: [TranslationContextItem]
         let phrase: String
+        let sourceLanguage: TranslationLanguage?
         let targetLanguage: TargetLanguage
     }
 
     private static func envelope(_ request: TranslationRequest) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let envelope = Envelope(context: request.context, phrase: request.text, targetLanguage: request.targetLanguage)
+        let envelope = Envelope(
+            context: request.context,
+            phrase: request.text,
+            sourceLanguage: request.sourceLanguage,
+            targetLanguage: request.targetLanguage
+        )
         let data = (try? encoder.encode(envelope)) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }

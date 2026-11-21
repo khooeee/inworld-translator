@@ -81,7 +81,7 @@ public struct Phrase: Identifiable, Sendable, Equatable {
     public var sourceText: String
     public var sourceState: SourceState
     public var translation: Translation
-    /// ISO 639 code of the spoken language, known once translation starts.
+    /// Selected or detected ISO 639 code of the source language.
     public var languageCode: String?
     public let targetLanguage: TargetLanguage
     public var timing: PhraseTiming

@@ -1,7 +1,7 @@
 import Foundation
 
-/// Translation targets drawn from the Inworld STT-1 language catalog.
-public enum TargetLanguage: String, CaseIterable, Codable, Sendable {
+/// The languages available for speech recognition and translation.
+public enum TranslationLanguage: String, CaseIterable, Codable, Sendable {
     case arabic = "ar"
     case cantonese = "yue"
     case chinese = "zh"
@@ -47,3 +47,5 @@ public enum TargetLanguage: String, CaseIterable, Codable, Sendable {
         }
     }
 }
+
+public typealias TargetLanguage = TranslationLanguage

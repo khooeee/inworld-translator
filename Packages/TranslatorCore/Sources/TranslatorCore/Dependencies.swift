@@ -70,6 +70,8 @@ public struct STTCredential: Sendable, Equatable {
 
 public struct STTConfiguration: Sendable, Equatable {
     public var sampleRate: Int
+    /// Preferred spoken language. Nil uses automatic detection.
+    public var languageHint: TranslationLanguage?
     /// Turn-detection tuning. Nil leaves the server default in place.
     public var endOfTurnConfidenceThreshold: Double?
     public var minEndOfTurnSilenceMilliseconds: Int?
@@ -79,12 +81,14 @@ public struct STTConfiguration: Sendable, Equatable {
         sampleRate: Int = 16_000,
         endOfTurnConfidenceThreshold: Double? = nil,
         minEndOfTurnSilenceMilliseconds: Int? = nil,
-        maxTurnSilenceMilliseconds: Int? = nil
+        maxTurnSilenceMilliseconds: Int? = nil,
+        languageHint: TranslationLanguage? = nil
     ) {
         self.sampleRate = sampleRate
         self.endOfTurnConfidenceThreshold = endOfTurnConfidenceThreshold
         self.minEndOfTurnSilenceMilliseconds = minEndOfTurnSilenceMilliseconds
         self.maxTurnSilenceMilliseconds = maxTurnSilenceMilliseconds
+        self.languageHint = languageHint
     }
 }
 
@@ -183,11 +187,19 @@ public struct TranslationRequest: Sendable, Equatable {
     public let text: String
     /// Earlier phrases of the conversation, oldest first.
     public let context: [TranslationContextItem]
+    /// The selected source language. Nil lets the translator detect it.
+    public let sourceLanguage: TranslationLanguage?
     public let targetLanguage: TargetLanguage
 
-    public init(text: String, context: [TranslationContextItem], targetLanguage: TargetLanguage = .english) {
+    public init(
+        text: String,
+        context: [TranslationContextItem],
+        sourceLanguage: TranslationLanguage? = nil,
+        targetLanguage: TargetLanguage = .english
+    ) {
         self.text = text
         self.context = context
+        self.sourceLanguage = sourceLanguage
         self.targetLanguage = targetLanguage
     }
 }

@@ -24,6 +24,7 @@ final class TranslationViewModel {
     /// Older phrases are dropped past this, so a long session stays bounded.
     nonisolated static let maxPhrases = 2000
     static let speaksTranslationsKey = "SpeaksTranslations"
+    static let sourceLanguageKey = "SourceLanguage"
     static let targetLanguageKey = "TargetLanguage"
 
     var onPhrasesChanged: ((PhraseChanges) -> Void)?
@@ -34,7 +35,7 @@ final class TranslationViewModel {
     var onTranslationCompleted: ((Phrase) -> Void)?
     var onSpeakingChanged: ((PhraseID?) -> Void)?
     var onSpeaksTranslationsChanged: ((Bool) -> Void)?
-    var onTargetLanguageChanged: (() -> Void)?
+    var onLanguagesChanged: (() -> Void)?
 
     private(set) var phrases: [Phrase] = []
     private(set) var status: SessionStatus = .idle
@@ -43,6 +44,7 @@ final class TranslationViewModel {
     private(set) var speaking: PhraseID?
     /// Whether translations are spoken aloud. Remembered between launches.
     private(set) var speaksTranslations: Bool
+    private(set) var sourceLanguage: TranslationLanguage?
     private(set) var targetLanguage: TargetLanguage
 
     private let session: any TranslationSessionControlling
@@ -56,6 +58,7 @@ final class TranslationViewModel {
         self.defaults = defaults
         self.hasAPIKey = hasAPIKey
         speaksTranslations = defaults.bool(forKey: Self.speaksTranslationsKey)
+        sourceLanguage = defaults.string(forKey: Self.sourceLanguageKey).flatMap(TranslationLanguage.init(rawValue:))
         targetLanguage = defaults.string(forKey: Self.targetLanguageKey).flatMap(TargetLanguage.init(rawValue:)) ?? .english
         events = Task { [weak self, events = session.events] in
             for await event in events {
@@ -72,7 +75,7 @@ final class TranslationViewModel {
     }
 
     var isRunning: Bool { status.isRunning }
-    var canChangeTargetLanguage: Bool { status == .idle }
+    var canChangeLanguages: Bool { status == .idle }
 
     func phrase(for id: PhraseID) -> Phrase? {
         positions[id].map { phrases[$0] }
@@ -95,9 +98,10 @@ final class TranslationViewModel {
             return
         }
         show(nil)
+        let sourceLanguage = self.sourceLanguage
         let targetLanguage = self.targetLanguage
         apply(.status(.starting))
-        Task { await session.start(targetLanguage: targetLanguage) }
+        Task { await session.start(sourceLanguage: sourceLanguage, targetLanguage: targetLanguage) }
     }
 
     func stop(notice: SessionNotice? = nil) {
@@ -116,11 +120,18 @@ final class TranslationViewModel {
         Task { [session] in await session.setSpeaksTranslations(enabled) }
     }
 
+    func setSourceLanguage(_ language: TranslationLanguage?) {
+        guard canChangeLanguages, sourceLanguage != language else { return }
+        sourceLanguage = language
+        defaults.set(language?.rawValue, forKey: Self.sourceLanguageKey)
+        onLanguagesChanged?()
+    }
+
     func setTargetLanguage(_ language: TargetLanguage) {
-        guard canChangeTargetLanguage, targetLanguage != language else { return }
+        guard canChangeLanguages, targetLanguage != language else { return }
         targetLanguage = language
         defaults.set(language.rawValue, forKey: Self.targetLanguageKey)
-        onTargetLanguageChanged?()
+        onLanguagesChanged?()
     }
 
     /// A notice asking for a key is out of date once the key changes.
