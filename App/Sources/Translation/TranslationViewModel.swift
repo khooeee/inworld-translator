@@ -2,7 +2,7 @@ import Foundation
 import TranslatorCore
 
 /// What the translation screen shows, kept on the main actor. Consumes the
-/// session's events and keeps the conversation in memory.
+/// session's events and holds the conversation shown on screen.
 @MainActor
 final class TranslationViewModel {
     struct Notice: Equatable {
@@ -22,7 +22,8 @@ final class TranslationViewModel {
     }
 
     /// Older phrases are dropped past this, so a long session stays bounded.
-    static let maxPhrases = 2000
+    nonisolated static let maxPhrases = 2000
+    static let speaksTranslationsKey = "SpeaksTranslations"
 
     var onPhrasesChanged: ((PhraseChanges) -> Void)?
     var onStatusChanged: ((SessionStatus) -> Void)?
@@ -30,23 +31,35 @@ final class TranslationViewModel {
     var onNoticeChanged: ((Notice?) -> Void)?
     /// A translation was completed, for VoiceOver to read out.
     var onTranslationCompleted: ((Phrase) -> Void)?
+    var onSpeakingChanged: ((PhraseID?) -> Void)?
+    var onSpeaksTranslationsChanged: ((Bool) -> Void)?
 
     private(set) var phrases: [Phrase] = []
     private(set) var status: SessionStatus = .idle
     private(set) var notice: Notice?
+    /// The phrase whose English is being spoken aloud.
+    private(set) var speaking: PhraseID?
+    /// Whether English is spoken aloud. Remembered between launches.
+    private(set) var speaksTranslations: Bool
 
     private let session: any TranslationSessionControlling
+    private let defaults: UserDefaults
     private let hasAPIKey: @MainActor () -> Bool
     private var positions: [PhraseID: Int] = [:]
     private var events: Task<Void, Never>?
 
-    init(session: any TranslationSessionControlling, hasAPIKey: @escaping @MainActor () -> Bool) {
+    init(session: any TranslationSessionControlling, defaults: UserDefaults = .standard, hasAPIKey: @escaping @MainActor () -> Bool) {
         self.session = session
+        self.defaults = defaults
         self.hasAPIKey = hasAPIKey
+        speaksTranslations = defaults.bool(forKey: Self.speaksTranslationsKey)
         events = Task { [weak self, events = session.events] in
             for await event in events {
                 self?.apply(event)
             }
+        }
+        if speaksTranslations {
+            Task { [session] in await session.setSpeaksTranslations(true) }
         }
     }
 
@@ -87,6 +100,14 @@ final class TranslationViewModel {
         show(nil)
     }
 
+    func setSpeaksTranslations(_ enabled: Bool) {
+        guard enabled != speaksTranslations else { return }
+        speaksTranslations = enabled
+        defaults.set(enabled, forKey: Self.speaksTranslationsKey)
+        onSpeaksTranslationsChanged?(enabled)
+        Task { [session] in await session.setSpeaksTranslations(enabled) }
+    }
+
     /// A notice asking for a key is out of date once the key changes.
     func apiKeyChanged() {
         guard notice?.action == .openAPIKeySettings else { return }
@@ -100,6 +121,21 @@ final class TranslationViewModel {
         phrases = keep
         reindex()
         onPhrasesChanged?(PhraseChanges(removed: removed))
+    }
+
+    func replaceConversation(with archive: ConversationArchive) -> Bool {
+        guard status == .idle else { return false }
+        let previous = phrases.map(\.id)
+        let previousIDs = Set(previous)
+        phrases = archive.restoredPhrases()
+        reindex()
+        let current = phrases.map(\.id)
+        onPhrasesChanged?(PhraseChanges(
+            inserted: current.filter { !previousIDs.contains($0) },
+            updated: current.filter(previousIDs.contains),
+            removed: previous.filter { positions[$0] == nil }
+        ))
+        return true
     }
 
     /// The whole conversation as text, for copying.
@@ -133,6 +169,16 @@ final class TranslationViewModel {
             phrases.remove(at: index)
             reindex()
             onPhrasesChanged?(PhraseChanges(removed: [id]))
+        case .speaking(let id):
+            guard id != speaking else { return }
+            let previous = speaking
+            speaking = id
+            onSpeakingChanged?(id)
+            // The phrases that started and stopped being spoken show it.
+            let changed = [previous, id].compactMap { $0 }.filter { positions[$0] != nil }
+            if !changed.isEmpty {
+                onPhrasesChanged?(PhraseChanges(updated: changed))
+            }
         }
     }
 
@@ -199,6 +245,8 @@ final class TranslationViewModel {
             Notice(message: String(localized: "Stopped because another app used the microphone."), action: nil)
         case .translationLimited:
             Notice(message: String(localized: "Inworld is limiting translations. Some phrases won't be translated."), action: nil)
+        case .speechUnavailable:
+            Notice(message: String(localized: "Couldn't speak the English aloud. Captions will continue."), action: nil)
         }
     }
 }

@@ -2,7 +2,7 @@
   "name": "mock-inworld",
   "version": "0.1.0",
   "private": true,
-  "description": "Local stand-in for the Inworld STT and chat completions APIs, for tests",
+  "description": "Local stand-in for the Inworld STT, chat completions and TTS APIs, for tests",
   "type": "module",
   "engines": {
     "node": ">=22"

@@ -13,10 +13,15 @@
 //   --only a,b          play only these sample IDs
 //   --drop-every SECS   cut the STT connection this often (mock server only)
 //   --model ID          translation model
+//   --speak             also turn each translation into speech with Inworld
+//                       TTS (not played out loud) and report how long the
+//                       audio takes to start. Clips wait while speech "plays",
+//                       so the run takes longer.
 //   --report PATH       also write the report as JSON
 //   --stt-price X       USD per hour of audio (default 0.15, On-Demand)
 //   --input-price X     USD per million input tokens (default 0.10)
 //   --output-price X    USD per million output tokens (default 0.40)
+//   --tts-price X       USD per million characters spoken (default 15)
 
 import Darwin
 import Foundation
@@ -30,10 +35,12 @@ struct Options {
     var only: Set<String>?
     var dropEvery: Double?
     var model: String?
+    var speak = false
     var report: URL?
     var sttPricePerHour = 0.15
     var inputPricePerMillion = 0.10
     var outputPricePerMillion = 0.40
+    var ttsPricePerMillion = 15.0
 
     static func parse(_ arguments: [String]) -> Options {
         var manifest: URL?
@@ -55,12 +62,14 @@ struct Options {
             case "--only": options.only = Set(value(argument).split(separator: ",").map(String.init))
             case "--drop-every": options.dropEvery = number(argument)
             case "--model": options.model = value(argument)
+            case "--speak": options.speak = true
             case "--report": options.report = URL(fileURLWithPath: value(argument))
             case "--stt-price": options.sttPricePerHour = number(argument)
             case "--input-price": options.inputPricePerMillion = number(argument)
             case "--output-price": options.outputPricePerMillion = number(argument)
+            case "--tts-price": options.ttsPricePerMillion = number(argument)
             case "-h", "--help":
-                print("usage: translator-cli MANIFEST [--base-url URL] [--speed X] [--loops N] [--only ids] [--drop-every S] [--model ID] [--report PATH]")
+                print("usage: translator-cli MANIFEST [--base-url URL] [--speed X] [--loops N] [--only ids] [--drop-every S] [--model ID] [--speak] [--report PATH]")
                 exit(0)
             default:
                 if argument.hasPrefix("-") { fail("unknown option \(argument)") }
@@ -120,6 +129,7 @@ var clientConfiguration = InworldClient.Configuration(baseURL: options.baseURL)
 if let model = options.model { clientConfiguration.translationModel = model }
 let client = InworldClient(configuration: clientConfiguration) { apiKey }
 let translator = MeteredTranslator(client)
+let synthesizer = MeteredSynthesizer(client)
 let audio = PCMFileAudioSource(playlist: clips, speed: options.speed)
 
 var sessionConfiguration = TranslationSession.Configuration()
@@ -130,8 +140,10 @@ let session = TranslationSession(
     credentials: client,
     translator: translator,
     connectivity: AlwaysOnline(),
+    speech: (synthesizer, audio),
     configuration: sessionConfiguration
 )
+await session.setSpeaksTranslations(options.speak)
 
 func residentMegabytes() -> Double {
     var info = mach_task_basic_info()
@@ -150,6 +162,8 @@ final class Collector: @unchecked Sendable {
     var statuses: [(Date, SessionStatus)] = []
     var notices: [SessionNotice] = []
     var printed: Set<PhraseID> = []
+    var spoken: [PhraseID] = []
+    var speaking: PhraseID?
 
     // Ordering and stability, checked as events arrive.
     var newestID: PhraseID?
@@ -203,6 +217,12 @@ let consumer = Task {
             }
         case .removed(let id):
             collector.phrases[id] = nil
+        case .speaking(let id):
+            collector.speaking = id
+            if let id {
+                collector.spoken.append(id)
+                print("  🔈 speaking \(id)")
+            }
         case .level:
             break
         }
@@ -232,6 +252,13 @@ while !audio.isFinished {
 }
 // Let the last turn finalize and translate, as a user would before tapping Stop.
 try? await Task.sleep(for: .seconds(3))
+if options.speak {
+    // And let the phone finish talking, within reason.
+    let deadline = Date().addingTimeInterval(30)
+    while collector.speaking != nil, Date() < deadline {
+        try? await Task.sleep(for: .milliseconds(200))
+    }
+}
 dropper.cancel()
 await session.stop()
 try? await Task.sleep(for: .milliseconds(300))
@@ -331,11 +358,14 @@ let speechToCaption = results.compactMap(\.speechEndToCaptionSeconds)
 let unavailable = phrases.filter { if case .unavailable = $0.translation { true } else { false } }
 let reconnects = collector.statuses.filter { $0.1 == .reconnecting }.count
 let unsettled = phrases.filter { !$0.isSettled }.count
-let integrityProblems = collector.outOfOrder + collector.changedAfterSettling + collector.reopened + unsettled
+let spokenOutOfOrder = zip(collector.spoken, collector.spoken.dropFirst()).filter { $0 >= $1 }.count
+let integrityProblems = collector.outOfOrder + collector.changedAfterSettling + collector.reopened + unsettled + spokenOutOfOrder
 let usage = translator.usage
 let audioSeconds = audio.audioSeconds
 let sttCost = audioSeconds / 3600 * options.sttPricePerHour
 let llmCost = Double(usage.prompt) / 1e6 * options.inputPricePerMillion + Double(usage.completion) / 1e6 * options.outputPricePerMillion
+let speech = synthesizer.usage
+let ttsCost = Double(speech.characters) / 1e6 * options.ttsPricePerMillion
 let elapsed = Date().timeIntervalSince(startedAt)
 
 print("\n=== Per clip ===")
@@ -355,10 +385,15 @@ print("Final transcript → first English text: p50 \(ms(percentile(firstText, 0
 print("Final transcript → complete English:   p50 \(ms(percentile(fullTranslation, 0.5))), p95 \(ms(percentile(fullTranslation, 0.95)))")
 print("End of speech → complete English:      p50 \(ms(percentile(speechToCaption, 0.5))), p95 \(ms(percentile(speechToCaption, 0.95)))")
 print("Reconnects: \(reconnects), notices: \(collector.notices.isEmpty ? "none" : collector.notices.map { "\($0)" }.joined(separator: ", "))")
-print("Integrity: \(integrityProblems == 0 ? "ok" : "PROBLEMS") — new phrases out of order \(collector.outOfOrder), changed after settling \(collector.changedAfterSettling), final reopened \(collector.reopened), unsettled after Stop \(unsettled)")
+print("Integrity: \(integrityProblems == 0 ? "ok" : "PROBLEMS") — new phrases out of order \(collector.outOfOrder), changed after settling \(collector.changedAfterSettling), final reopened \(collector.reopened), unsettled after Stop \(unsettled)\(options.speak ? ", spoken out of order \(spokenOutOfOrder)" : "")")
+if options.speak {
+    print("Speech: \(collector.spoken.count) phrases spoken, \(speech.requests) requests (\(speech.failures) failed), \(speech.characters) characters, " + String(format: "%.0fs of audio", audio.speechSeconds))
+    print("Speech request → first audio: p50 \(ms(percentile(speech.firstAudio, 0.5))), p95 \(ms(percentile(speech.firstAudio, 0.95)))")
+}
 print(String(format: "Audio streamed: %.0fs; session wall time: %.0fs", audioSeconds, elapsed))
 print("Translation requests: \(usage.requests), tokens in/out: \(usage.prompt)/\(usage.completion), models: \(usage.models.map { "\($0.key) ×\($0.value)" }.sorted().joined(separator: ", "))")
-print(String(format: "Estimated cost: STT $%.4f + LLM $%.4f = $%.4f (≈ $%.3f per hour of streaming)", sttCost, llmCost, sttCost + llmCost, audioSeconds > 0 ? (sttCost + llmCost) / audioSeconds * 3600 : 0))
+let totalCost = sttCost + llmCost + ttsCost
+print(String(format: "Estimated cost: STT $%.4f + LLM $%.4f\(options.speak ? String(format: " + TTS $%.4f", ttsCost) : "") = $%.4f (≈ $%.3f per hour of streaming)", sttCost, llmCost, totalCost, audioSeconds > 0 ? totalCost / audioSeconds * 3600 : 0))
 print("Memory (MB resident): " + memorySamples.map { String(format: "%.0fs %.1f", $0.0, $0.1) }.joined(separator: " · "))
 
 if let reportURL = options.report {
@@ -373,6 +408,10 @@ if let reportURL = options.report {
         let speechToCaptionP95: Double?
         let reconnects: Int
         let integrityProblems: Int
+        let phrasesSpoken: Int
+        let speechCharacters: Int
+        let speechFirstAudioP50: Double?
+        let speechFirstAudioP95: Double?
         let audioSeconds: Double
         let promptTokens: Int
         let completionTokens: Int
@@ -384,9 +423,12 @@ if let reportURL = options.report {
         firstTextLatencyP50: percentile(firstText, 0.5),
         translationLatencyP50: percentile(fullTranslation, 0.5), translationLatencyP95: percentile(fullTranslation, 0.95),
         speechToCaptionP50: percentile(speechToCaption, 0.5), speechToCaptionP95: percentile(speechToCaption, 0.95),
-        reconnects: reconnects, integrityProblems: integrityProblems, audioSeconds: audioSeconds,
+        reconnects: reconnects, integrityProblems: integrityProblems,
+        phrasesSpoken: collector.spoken.count, speechCharacters: speech.characters,
+        speechFirstAudioP50: percentile(speech.firstAudio, 0.5), speechFirstAudioP95: percentile(speech.firstAudio, 0.95),
+        audioSeconds: audioSeconds,
         promptTokens: usage.prompt, completionTokens: usage.completion,
-        estimatedCostUSD: sttCost + llmCost, memoryMegabytes: memorySamples.map(\.1)
+        estimatedCostUSD: totalCost, memoryMegabytes: memorySamples.map(\.1)
     )
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]

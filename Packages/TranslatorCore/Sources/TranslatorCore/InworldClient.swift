@@ -1,28 +1,35 @@
 import Foundation
 
 /// Talks to the Inworld API directly with the user's API key: credentials for
-/// the STT socket, and translations through chat completions.
+/// the STT socket, translations through chat completions, and speech through
+/// streaming TTS.
 ///
 /// The key is read through `apiKey` on every use, so a key saved or changed
 /// in Settings takes effect on the next connection or request.
-public struct InworldClient: CredentialProviding, Translating {
+public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizing {
     public struct Configuration: Sendable, Equatable {
         public var baseURL: URL
         public var sttModel: String
         public var translationModel: String
         /// Tried in order if the main model fails before answering.
         public var translationFallbackModels: [String]
+        public var ttsModel: String
+        public var ttsVoice: String
 
         public init(
             baseURL: URL = URL(string: "https://api.inworld.ai")!,
             sttModel: String = "inworld/inworld-stt-1",
             translationModel: String = "google-ai-studio/gemini-2.5-flash-lite",
-            translationFallbackModels: [String] = ["openai/gpt-4o-mini"]
+            translationFallbackModels: [String] = ["openai/gpt-4o-mini"],
+            ttsModel: String = "inworld-tts-2-flash",
+            ttsVoice: String = "Ashley"
         ) {
             self.baseURL = baseURL
             self.sttModel = sttModel
             self.translationModel = translationModel
             self.translationFallbackModels = translationFallbackModels
+            self.ttsModel = ttsModel
+            self.ttsVoice = ttsVoice
         }
 
         var sttWebSocketURL: URL {
@@ -35,7 +42,16 @@ public struct InworldClient: CredentialProviding, Translating {
         var chatCompletionsURL: URL {
             baseURL.appendingPathComponent("v1/chat/completions")
         }
+
+        var ttsStreamURL: URL {
+            var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+            components.path = components.path.trimmingSuffix("/") + "/tts/v1/voice:stream"
+            return components.url!
+        }
     }
+
+    /// The longest text one streaming TTS request accepts, in UTF-16 units.
+    static let maxSpeechLength = 4000
 
     private let configuration: Configuration
     private let apiKey: @Sendable () async -> String?
@@ -149,6 +165,69 @@ public struct InworldClient: CredentialProviding, Translating {
         throw ServiceError.invalidResponse
     }
 
+    // MARK: SpeechSynthesizing
+
+    public func synthesize(_ text: String) -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await self.runSynthesis(text) { continuation.yield($0) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: Self.normalize(error))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private func runSynthesis(_ text: String, yield: @Sendable (Data) -> Void) async throws {
+        var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while text.utf16.count > Self.maxSpeechLength {
+            text.removeLast()
+        }
+        guard !text.isEmpty else { return }
+
+        var request = URLRequest(url: configuration.ttsStreamURL)
+        request.httpMethod = "POST"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue(try await authorization(), forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            SpeechRequest(
+                text: text,
+                voiceId: configuration.ttsVoice,
+                modelId: configuration.ttsModel,
+                // PCM is headerless; LINEAR16 would put a WAV header on every chunk.
+                audioConfig: .init(audioEncoding: "PCM", sampleRateHertz: SpeechAudio.sampleRate)
+            )
+        )
+
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else { throw ServiceError.invalidResponse }
+        guard http.statusCode == 200 else { throw Self.error(for: http) }
+
+        // One JSON object per line, each with a piece of the audio.
+        let decoder = JSONDecoder()
+        for try await line in bytes.lines {
+            guard let chunk = try? decoder.decode(SpeechChunk.self, from: Data(line.utf8)) else { continue }
+            // Failures after the response has started arrive in-band.
+            if let error = chunk.error { throw Self.error(forStatusCode: error.code) }
+            if let audio = chunk.result?.audioContent.flatMap({ Data(base64Encoded: $0) }), !audio.isEmpty {
+                yield(audio)
+            }
+        }
+    }
+
+    /// Maps an in-band error's gRPC status code.
+    private static func error(forStatusCode code: Int?) -> ServiceError {
+        switch code {
+        case 7, 16: .unauthorized // PERMISSION_DENIED, UNAUTHENTICATED
+        case 8: .rateLimited(retryAfter: nil) // RESOURCE_EXHAUSTED
+        default: .server(status: 502)
+        }
+    }
+
     private static func error(for response: HTTPURLResponse) -> ServiceError {
         switch response.statusCode {
         case 401, 403:
@@ -210,6 +289,32 @@ public struct InworldClient: CredentialProviding, Translating {
         let model: String?
         let choices: [Choice]?
         let usage: Usage?
+        let error: ErrorPayload?
+    }
+
+    private struct SpeechRequest: Encodable {
+        struct AudioConfig: Encodable {
+            let audioEncoding: String
+            let sampleRateHertz: Int
+        }
+
+        let text: String
+        let voiceId: String
+        let modelId: String
+        let audioConfig: AudioConfig
+    }
+
+    private struct SpeechChunk: Decodable {
+        struct Result: Decodable {
+            let audioContent: String?
+        }
+
+        struct ErrorPayload: Decodable {
+            let code: Int?
+            let message: String?
+        }
+
+        let result: Result?
         let error: ErrorPayload?
     }
 }

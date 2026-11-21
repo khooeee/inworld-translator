@@ -5,7 +5,11 @@ import Synchronization
 /// microphone: 100 ms chunks at real-time pace (or faster), with silence
 /// between clips so each one ends a turn, and silence after the last one
 /// until the session stops. For the validation harness and Debug builds.
-public final class PCMFileAudioSource: AudioCapturing {
+///
+/// It also stands in for the speaker. Speech is not played out loud; it takes
+/// as long as it would take to hear, and the next clip waits for it to end,
+/// as people do while the phone is talking.
+public final class PCMFileAudioSource: AudioCapturing, SpeechPlaying {
     public struct Clip: Sendable {
         public let id: String
         public let pcm: Data
@@ -30,6 +34,8 @@ public final class PCMFileAudioSource: AudioCapturing {
         var playback: [Playback] = []
         var bytesSent = 0
         var finished = false
+        var speaking = false
+        var speechBytes = 0
     }
 
     private let playlist: [Clip]
@@ -47,6 +53,8 @@ public final class PCMFileAudioSource: AudioCapturing {
     public var playback: [Playback] { state.withLock { $0.playback } }
     public var audioSeconds: Double { Double(state.withLock { $0.bytesSent }) / 32_000 }
     public var isFinished: Bool { state.withLock { $0.finished } }
+    /// How much speech has been played, in seconds of audio.
+    public var speechSeconds: Double { Double(state.withLock { $0.speechBytes }) / Double(SpeechAudio.sampleRate * 2) }
 
     public func start() async throws -> AudioCaptureStream {
         let (chunks, chunkContinuation) = AsyncStream<AudioChunk>.makeStream(bufferingPolicy: .bufferingNewest(50))
@@ -74,6 +82,9 @@ public final class PCMFileAudioSource: AudioCapturing {
 
             guard await sendSilence(.milliseconds(500)) else { return }
             for clip in playlist {
+                while self.state.withLock({ $0.speaking }) {
+                    guard await send(silence) else { return }
+                }
                 self.state.withLock { $0.playback.append(Playback(id: clip.id, startedAt: Date())) }
                 var offset = 0
                 while offset < clip.pcm.count {
@@ -109,6 +120,23 @@ public final class PCMFileAudioSource: AudioCapturing {
         await player?.value
         chunks?.finish()
         events?.finish()
+    }
+
+    // MARK: SpeechPlaying
+
+    public func play(_ audio: AsyncThrowingStream<Data, Error>) async throws {
+        state.withLock { $0.speaking = true }
+        defer { state.withLock { $0.speaking = false } }
+        let clock = ContinuousClock()
+        var end = clock.now
+        for try await chunk in audio {
+            state.withLock { $0.speechBytes += chunk.count }
+            // Audio that arrives after a gap starts when it arrives.
+            let duration = Duration.seconds(Double(chunk.count) / Double(SpeechAudio.sampleRate * 2)) / speed
+            end = max(end, clock.now) + duration
+        }
+        try Task.checkCancellation()
+        try await clock.sleep(until: end)
     }
 
     /// Loudness of a PCM16 chunk on a 0 to 1 scale, for the level meter.

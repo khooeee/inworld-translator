@@ -273,4 +273,69 @@ struct InworldClientTests {
             _ = try await collect(client.translate(.init(text: "hola", context: [])))
         }
     }
+
+    // MARK: Speech
+
+    private func audioLine(_ bytes: [UInt8]) -> String {
+        #"{"result":{"audioContent":"\#(Data(bytes).base64EncodedString())","usage":{"processedCharactersCount":0}}}"# + "\n"
+    }
+
+    private func speech(_ text: String) async throws -> Data {
+        var audio = Data()
+        for try await chunk in client.synthesize(text) { audio.append(chunk) }
+        return audio
+    }
+
+    @Test("speech is requested as raw 24 kHz PCM from the streaming TTS endpoint")
+    func speechRequest() async throws {
+        stub(headers: ["Content-Type": "application/json"], body: audioLine([1, 2, 3]) + audioLine([4]))
+
+        let audio = try await speech("  Good morning.\n")
+
+        #expect(audio == Data([1, 2, 3, 4]))
+        let recorded = try #require(StubProtocol.requests.withLock { $0.first })
+        #expect(recorded.url?.absoluteString == "https://api.inworld.ai/tts/v1/voice:stream")
+        #expect(recorded.headers["Authorization"] == "Basic QmFzZTY0S2V5")
+        let body = try #require(try JSONSerialization.jsonObject(with: recorded.body ?? Data()) as? [String: Any])
+        #expect(body["text"] as? String == "Good morning.")
+        #expect(body["modelId"] as? String == "inworld-tts-2-flash")
+        #expect(body["voiceId"] as? String == "Ashley")
+        let audioConfig = try #require(body["audioConfig"] as? [String: Any])
+        #expect(audioConfig["audioEncoding"] as? String == "PCM")
+        #expect(audioConfig["sampleRateHertz"] as? Int == 24_000)
+    }
+
+    @Test("text over the request limit is shortened, and empty text sends nothing")
+    func speechLength() async throws {
+        stub(headers: ["Content-Type": "application/json"], body: audioLine([0, 0]))
+        _ = try await speech(String(repeating: "あ", count: 4100))
+        let recorded = try #require(StubProtocol.requests.withLock { $0.first })
+        let body = try #require(try JSONSerialization.jsonObject(with: recorded.body ?? Data()) as? [String: Any])
+        #expect((body["text"] as? String)?.utf16.count == InworldClient.maxSpeechLength)
+
+        StubProtocol.requests.withLock { $0.removeAll() }
+        #expect(try await speech(" \n").isEmpty)
+        #expect(StubProtocol.requests.withLock { $0.isEmpty })
+    }
+
+    @Test("speech errors map to service errors, in the response or in-band")
+    func speechErrors() async {
+        stub(status: 401, headers: ["Content-Type": "application/json"], body: #"{"code":16,"message":"x"}"#)
+        await #expect(throws: ServiceError.unauthorized) { _ = try await speech("Hi.") }
+
+        let cases: [(Int, ServiceError)] = [(16, .unauthorized), (7, .unauthorized), (8, .rateLimited(retryAfter: nil)), (13, .server(status: 502))]
+        for (code, expected) in cases {
+            stub(headers: ["Content-Type": "application/json"], body: audioLine([1, 2]) + #"{"error":{"code":\#(code),"message":"x"}}"# + "\n")
+            await #expect(throws: expected, "code \(code)") { _ = try await speech("Hi.") }
+        }
+    }
+
+    @Test("speech without a key sends nothing")
+    func speechWithoutKey() async {
+        let client = InworldClient(session: StubProtocol.session()) { nil }
+        await #expect(throws: ServiceError.notConfigured) {
+            for try await _ in client.synthesize("Hi.") {}
+        }
+        #expect(StubProtocol.requests.withLock { $0.isEmpty })
+    }
 }

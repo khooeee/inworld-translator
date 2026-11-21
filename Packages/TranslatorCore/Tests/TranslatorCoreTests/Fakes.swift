@@ -331,6 +331,88 @@ final class FakeTranslator: Translating {
     }
 }
 
+// MARK: - Speech
+
+/// Synthesizes text as its own UTF-8 bytes, so what was played can be read
+/// back as text. Playback finishes at once, or waits for `finishPlaying()`
+/// while `holdsPlayback` is set.
+final class FakeSpeech: SpeechSynthesizing, SpeechPlaying {
+    struct State {
+        var requested: [String] = []
+        var playing: String?
+        var played: [String] = []
+        var cutShort: [String] = []
+        var failures: [Error] = []
+        var holdsPlayback = false
+        var release = false
+    }
+
+    let state = Mutex(State())
+
+    var requested: [String] { state.withLock { $0.requested } }
+    var playing: String? { state.withLock { $0.playing } }
+    var played: [String] { state.withLock { $0.played } }
+    var cutShort: [String] { state.withLock { $0.cutShort } }
+
+    func holdPlayback() {
+        state.withLock { $0.holdsPlayback = true }
+    }
+
+    /// Lets the phrase being played finish.
+    func finishPlaying() {
+        state.withLock { $0.release = true }
+    }
+
+    /// Makes the next synthesis requests fail, in order.
+    func failNext(_ errors: Error...) {
+        state.withLock { $0.failures.append(contentsOf: errors) }
+    }
+
+    func synthesize(_ text: String) -> AsyncThrowingStream<Data, Error> {
+        let failure = state.withLock { state -> Error? in
+            state.requested.append(text)
+            return state.failures.isEmpty ? nil : state.failures.removeFirst()
+        }
+        return AsyncThrowingStream { continuation in
+            if let failure {
+                continuation.finish(throwing: failure)
+                return
+            }
+            // Two chunks, split mid-sample, as the network might deliver them.
+            let bytes = Data(text.utf8)
+            continuation.yield(bytes.prefix(1))
+            continuation.yield(bytes.dropFirst())
+            continuation.finish()
+        }
+    }
+
+    func play(_ audio: AsyncThrowingStream<Data, Error>) async throws {
+        var bytes = Data()
+        for try await chunk in audio { bytes.append(chunk) }
+        let text = String(decoding: bytes, as: UTF8.self)
+        state.withLock {
+            $0.playing = text
+            $0.release = false
+        }
+        do {
+            while state.withLock({ $0.holdsPlayback && !$0.release }) {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            try Task.checkCancellation()
+        } catch {
+            state.withLock {
+                $0.playing = nil
+                $0.cutShort.append(text)
+            }
+            throw error
+        }
+        state.withLock {
+            $0.playing = nil
+            $0.played.append(text)
+        }
+    }
+}
+
 // MARK: - Connectivity
 
 final class FakeConnectivity: ConnectivityMonitoring {
@@ -365,6 +447,7 @@ final class SessionHarness: Sendable {
     let credentials = FakeCredentials()
     let translator = FakeTranslator()
     let connectivity = FakeConnectivity()
+    let speech = FakeSpeech()
     let session: TranslationSession
     private let recorded = EventLog()
     private let recorder: Task<Void, Never>
@@ -394,6 +477,7 @@ final class SessionHarness: Sendable {
             credentials: credentials,
             translator: translator,
             connectivity: connectivity,
+            speech: (speech, speech),
             configuration: configuration,
             translation: pipeline
         )
@@ -421,6 +505,11 @@ final class SessionHarness: Sendable {
     }
 
     var status: SessionStatus? { statuses.last }
+
+    /// Every `.speaking` event, in order.
+    var speaking: [PhraseID?] {
+        events.compactMap { if case .speaking(let id) = $0 { .some(id) } else { nil } }
+    }
 
     /// The latest version of every phrase, in ID order, without removed ones.
     var phrases: [Phrase] {

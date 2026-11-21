@@ -39,15 +39,19 @@ final class ConnectionStatusView: UIView {
         fatalError("init(coder:) is not supported")
     }
 
-    func show(_ status: SessionStatus) {
-        let (text, color) = Self.describe(status)
+    func show(_ status: SessionStatus, speaking: Bool = false) {
+        let (text, color) = Self.describe(status, speaking: speaking)
         label.text = text
         dot.backgroundColor = color
         accessibilityValue = text
     }
 
-    static func describe(_ status: SessionStatus) -> (String, UIColor) {
-        switch status {
+    static func describe(_ status: SessionStatus, speaking: Bool = false) -> (String, UIColor) {
+        // Listening is paused while the phone talks.
+        if speaking, status == .listening {
+            return (String(localized: "Speaking English"), .systemBlue)
+        }
+        return switch status {
         case .idle: (String(localized: "Ready"), .systemGray)
         case .starting: (String(localized: "Connecting…"), .systemOrange)
         case .listening: (String(localized: "Listening"), .systemGreen)

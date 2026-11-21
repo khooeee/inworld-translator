@@ -11,6 +11,7 @@ import TranslatorCore
 ///   -AudioSamplesDirectory /path/to/tools/samples/out
 ///   -AudioSampleIDs es-name-time,ja-phone
 ///   -AutoStart YES
+///   -SpeaksTranslations YES             speak English aloud (any build)
 @MainActor
 struct AppEnvironment {
     let keyStore = APIKeyStore()
@@ -33,15 +34,16 @@ struct AppEnvironment {
         let apiKey: @Sendable () async -> String? = { keyOverride ?? keyStore.load() }
 
         let client = InworldClient(configuration: .init(baseURL: baseURL), apiKey: apiKey)
-        let audio: any AudioCapturing = Self.sampleAudio(overrides) ?? MicrophoneCapture()
+        let audio: any AudioCapturing & SpeechPlaying = Self.sampleAudio(overrides) ?? MicrophoneCapture()
         let session = TranslationSession(
             audio: audio,
             connector: WebSocketSTTConnector(),
             credentials: client,
             translator: client,
-            connectivity: PathMonitor()
+            connectivity: PathMonitor(),
+            speech: (synthesizer: client, player: audio)
         )
-        viewModel = TranslationViewModel(session: session) { keyOverride != nil || keyStore.hasKey }
+        viewModel = TranslationViewModel(session: session, defaults: defaults) { keyOverride != nil || keyStore.hasKey }
     }
 
     private static func sampleAudio(_ defaults: UserDefaults) -> PCMFileAudioSource? {

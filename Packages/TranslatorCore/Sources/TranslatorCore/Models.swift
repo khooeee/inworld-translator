@@ -17,7 +17,7 @@ public struct PhraseID: Hashable, Comparable, Sendable, CustomStringConvertible 
 }
 
 /// Why a finalized phrase has no English translation.
-public enum TranslationUnavailableReason: Sendable, Equatable {
+public enum TranslationUnavailableReason: String, Codable, Sendable, Equatable {
     /// The request failed, or timed out, after any retry.
     case failed
     /// Dropped from the queue so translation could keep up with live speech.
@@ -31,7 +31,7 @@ public enum TranslationUnavailableReason: Sendable, Equatable {
 }
 
 /// When each stage of a phrase happened, for latency measurement.
-public struct PhraseTiming: Sendable, Equatable {
+public struct PhraseTiming: Codable, Sendable, Equatable {
     public var startedAt: Date
     public var finalizedAt: Date?
     public var translationStartedAt: Date?
@@ -161,6 +161,8 @@ public enum SessionNotice: Sendable, Equatable {
     case stoppedByInterruption
     /// Translations are being refused by a usage limit; listening continues.
     case translationLimited
+    /// English could not be spoken aloud; captions continue.
+    case speechUnavailable
 }
 
 public enum SessionEvent: Sendable, Equatable {
@@ -172,4 +174,7 @@ public enum SessionEvent: Sendable, Equatable {
     /// Microphone level, 0 through 1.
     case level(Float)
     case notice(SessionNotice)
+    /// This phrase's English is being spoken aloud; nil once nothing is.
+    /// Listening is paused meanwhile, so the phone does not hear itself.
+    case speaking(PhraseID?)
 }

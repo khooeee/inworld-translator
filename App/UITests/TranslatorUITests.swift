@@ -21,6 +21,7 @@ final class TranslatorUITests: XCTestCase {
         let sttAuthFailures: Int
         let completions: Int
         let audioMs: Double
+        let speechRequests: Int
     }
 
     override func setUp() async throws {
@@ -46,6 +47,8 @@ final class TranslatorUITests: XCTestCase {
             "-InworldBaseURL", Self.mockURL.absoluteString,
             "-AudioSamplesDirectory", Self.samplesDirectory.path,
             "-AudioSampleIDs", "es-name-time,ja-phone",
+            // Each test starts with speech off, whatever an earlier run left.
+            "-SpeaksTranslations", "NO",
         ]
         if let apiKey {
             app.launchArguments += ["-InworldAPIKey", apiKey]
@@ -83,6 +86,63 @@ final class TranslatorUITests: XCTestCase {
         let stopped = try await mockStats().audioMs
         try await Task.sleep(for: .seconds(2))
         let later = try await mockStats().audioMs
+        XCTAssertEqual(stopped, later)
+    }
+
+    func testConversationFilesRoundTrip() throws {
+        let app = launch(apiKey: "mock-api-key")
+        let more = app.navigationBars.buttons["More"]
+        let ready = app.otherElements["Connection"]
+        app.buttons["Start"].tap()
+        XCTAssertTrue(caption(Self.firstCaption, in: app).waitForExistence(timeout: 30))
+        app.buttons["Stop"].tap()
+        let stopped = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Ready"), object: ready)
+        XCTAssertEqual(XCTWaiter.wait(for: [stopped], timeout: 15), .completed)
+
+        more.tap()
+        app.buttons["Save Conversation"].tap()
+        let save = app.buttons["Save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 10), app.debugDescription)
+        let filename = app.textFields["DOCPicker.filenameTextField"]
+        let testName = "Translator-" + UUID().uuidString.prefix(8)
+        filename.tap()
+        filename.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 40) + testName)
+        save.tap()
+        XCTAssertTrue(save.waitForNonExistence(timeout: 10))
+
+        more.tap()
+        app.buttons["Clear Conversation"].tap()
+        XCTAssertTrue(caption(Self.firstCaption, in: app).waitForNonExistence(timeout: 5))
+
+        more.tap()
+        app.buttons["Load Conversation"].tap()
+        let file = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", testName)).firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 10), app.debugDescription)
+        file.tap()
+        XCTAssertTrue(caption(Self.firstCaption, in: app).waitForExistence(timeout: 10), app.debugDescription)
+    }
+
+    func testSpeaksEnglishWhenTurnedOn() async throws {
+        let app = launch(apiKey: "mock-api-key")
+        let speak = app.buttons["Speak English"]
+        XCTAssertEqual(speak.value as? String, "Off")
+        speak.tap()
+        XCTAssertEqual(speak.value as? String, "On")
+
+        let requested = try await mockStats().speechRequests
+        app.buttons["Start"].tap()
+        XCTAssertTrue(caption(Self.firstCaption, in: app).waitForExistence(timeout: 30))
+        let speaking = expectation(for: NSPredicate(format: "value == %@", "Speaking English"), evaluatedWith: app.otherElements["Connection"])
+        await fulfillment(of: [speaking], timeout: 15)
+        let requestedAfter = try await mockStats().speechRequests
+        XCTAssertGreaterThan(requestedAfter, requested)
+
+        app.buttons["Stop"].tap()
+        XCTAssertTrue(app.buttons["Start"].waitForExistence(timeout: 15))
+        // Stop means quiet: no more speech is requested.
+        let stopped = try await mockStats().speechRequests
+        try await Task.sleep(for: .seconds(2))
+        let later = try await mockStats().speechRequests
         XCTAssertEqual(stopped, later)
     }
 

@@ -1,8 +1,10 @@
 import TranslatorCore
 import UIKit
+import UniformTypeIdentifiers
 
 /// The one screen: connection status and microphone level at the top, the
-/// conversation in the middle, and Start/Stop at the bottom.
+/// conversation in the middle, and Start/Stop with the speech toggle at the
+/// bottom.
 final class TranslationViewController: UIViewController {
     private let viewModel: TranslationViewModel
     private let openAPIKeySettings: () -> Void
@@ -15,8 +17,10 @@ final class TranslationViewController: UIViewController {
     private let noticeView = NoticeView()
     private let jumpButton = UIButton(configuration: .filled())
     private let startButton = UIButton(configuration: .filled())
+    private let speakButton = UIButton(configuration: .gray())
 
     private var dataSource: UITableViewDiffableDataSource<Int, PhraseID>!
+    private var pendingExport: URL?
     /// Whether new captions should scroll into view: true until the user
     /// scrolls up to read earlier ones.
     private var followsLatest = true
@@ -52,13 +56,19 @@ final class TranslationViewController: UIViewController {
             guard let self else { return }
             self.copy(self.viewModel.transcript())
         }
+        let save = UIAction(title: String(localized: "Save Conversation"), image: UIImage(systemName: "square.and.arrow.down")) { [weak self] _ in
+            self?.saveConversation()
+        }
+        let load = UIAction(title: String(localized: "Load Conversation"), image: UIImage(systemName: "folder")) { [weak self] _ in
+            self?.chooseConversationFile()
+        }
         let clear = UIAction(title: String(localized: "Clear Conversation"), image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
             self?.viewModel.clear()
         }
         let languages = UIAction(title: String(localized: "Supported Languages"), image: UIImage(systemName: "globe")) { [weak self] _ in
             self?.navigationController?.pushViewController(SupportedLanguagesViewController(), animated: true)
         }
-        let conversation = UIMenu(options: .displayInline, children: [copyAll, clear])
+        let conversation = UIMenu(options: .displayInline, children: [copyAll, save, load, clear])
         let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), menu: UIMenu(children: [conversation, languages]))
         more.accessibilityLabel = String(localized: "More")
         let settings = UIBarButtonItem(image: UIImage(systemName: "key"), primaryAction: UIAction { [weak self] _ in
@@ -97,8 +107,8 @@ final class TranslationViewController: UIViewController {
 
         dataSource = UITableViewDiffableDataSource(tableView: tableView) { [weak self] tableView, indexPath, id in
             let cell = tableView.dequeueReusableCell(withIdentifier: PhraseCell.reuseIdentifier, for: indexPath) as! PhraseCell
-            if let phrase = self?.viewModel.phrase(for: id) {
-                cell.configure(with: phrase)
+            if let self, let phrase = self.viewModel.phrase(for: id) {
+                cell.configure(with: phrase, isSpeaking: self.viewModel.speaking == id)
             }
             cell.onCopy = { [weak self] text in self?.copy(text) }
             return cell
@@ -144,6 +154,14 @@ final class TranslationViewController: UIViewController {
         startButton.translatesAutoresizingMaskIntoConstraints = false
         startButton.addAction(UIAction { [weak self] _ in self?.viewModel.toggle() }, for: .primaryActionTriggered)
 
+        speakButton.translatesAutoresizingMaskIntoConstraints = false
+        speakButton.accessibilityLabel = String(localized: "Speak English")
+        speakButton.accessibilityHint = String(localized: "Reads each translation aloud. Listening pauses while it speaks.")
+        speakButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.viewModel.setSpeaksTranslations(!self.viewModel.speaksTranslations)
+        }, for: .primaryActionTriggered)
+
         var jump = UIButton.Configuration.filled()
         jump.cornerStyle = .capsule
         jump.buttonSize = .small
@@ -162,7 +180,9 @@ final class TranslationViewController: UIViewController {
     }
 
     private func layout() {
-        let bottomStack = UIStackView(arrangedSubviews: [noticeView, startButton])
+        let controls = UIStackView(arrangedSubviews: [speakButton, startButton])
+        controls.spacing = 12
+        let bottomStack = UIStackView(arrangedSubviews: [noticeView, controls])
         bottomStack.axis = .vertical
         bottomStack.spacing = 12
         bottomStack.translatesAutoresizingMaskIntoConstraints = false
@@ -191,6 +211,7 @@ final class TranslationViewController: UIViewController {
             bottomStack.trailingAnchor.constraint(equalTo: readable.trailingAnchor),
             bottomStack.bottomAnchor.constraint(equalTo: margins.bottomAnchor, constant: -8),
             startButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
+            speakButton.widthAnchor.constraint(equalTo: speakButton.heightAnchor),
         ])
         tableView.cellLayoutMarginsFollowReadableWidth = true
     }
@@ -202,8 +223,15 @@ final class TranslationViewController: UIViewController {
         viewModel.onStatusChanged = { [weak self] status in self?.render(status: status) }
         viewModel.onLevelChanged = { [weak self] level in self?.levelMeter.set(level: level) }
         viewModel.onNoticeChanged = { [weak self] notice in self?.render(notice: notice) }
-        viewModel.onTranslationCompleted = { phrase in
-            guard UIAccessibility.isVoiceOverRunning, let english = phrase.english, !phrase.isSpokenInEnglish else { return }
+        viewModel.onSpeakingChanged = { [weak self] speaking in
+            guard let self else { return }
+            self.statusView.show(self.viewModel.status, speaking: speaking != nil)
+        }
+        viewModel.onSpeaksTranslationsChanged = { [weak self] _ in self?.renderSpeechToggle() }
+        viewModel.onTranslationCompleted = { [weak self] phrase in
+            // With speech on, the phone reads it out already.
+            guard UIAccessibility.isVoiceOverRunning, self?.viewModel.speaksTranslations == false,
+                  let english = phrase.english, !phrase.isSpokenInEnglish else { return }
             // Queued, so a new caption never cuts off the one being read.
             let announcement = NSAttributedString(string: english, attributes: [.accessibilitySpeechQueueAnnouncement: true])
             UIAccessibility.post(notification: .announcement, argument: announcement)
@@ -213,30 +241,19 @@ final class TranslationViewController: UIViewController {
         // starting at launch.
         render(status: viewModel.status)
         render(notice: viewModel.notice)
+        renderSpeechToggle()
         apply(TranslationViewModel.PhraseChanges(inserted: viewModel.phrases.map(\.id)))
     }
 
     private func apply(_ changes: TranslationViewModel.PhraseChanges) {
         var snapshot = dataSource.snapshot()
-        if snapshot.numberOfSections == 0 {
+        let structureChanged = !changes.inserted.isEmpty || !changes.removed.isEmpty
+        if structureChanged || snapshot.numberOfSections == 0 {
+            snapshot = NSDiffableDataSourceSnapshot()
             snapshot.appendSections([0])
+            snapshot.appendItems(viewModel.phrases.map(\.id))
         }
-        let present = Set(snapshot.itemIdentifiers)
-        let removed = changes.removed.filter(present.contains)
-        if !removed.isEmpty {
-            snapshot.deleteItems(removed)
-        }
-        let inserted = changes.inserted.filter { !present.contains($0) }
-        for id in inserted {
-            // Phrases are kept in order by the view model; mirror its order.
-            let following = viewModel.phrases.first { $0.id > id && snapshot.indexOfItem($0.id) != nil }
-            if let following {
-                snapshot.insertItems([id], beforeItem: following.id)
-            } else {
-                snapshot.appendItems([id])
-            }
-        }
-        let updated = changes.updated.filter(present.contains)
+        let updated = changes.updated.filter { snapshot.indexOfItem($0) != nil }
         if !updated.isEmpty {
             snapshot.reconfigureItems(updated)
         }
@@ -244,12 +261,12 @@ final class TranslationViewController: UIViewController {
         let follow = followsLatest
         // Revisions arrive many times a second; animating each one makes the
         // list shimmer, so only insertions and removals animate.
-        let animate = !(inserted.isEmpty && removed.isEmpty) && !UIAccessibility.isReduceMotionEnabled
+        let animate = structureChanged && !UIAccessibility.isReduceMotionEnabled
         dataSource.apply(snapshot, animatingDifferences: animate) { [weak self] in
             guard let self else { return }
             if follow {
                 self.scrollToLatest(animated: animate)
-            } else if !inserted.isEmpty {
+            } else if !changes.inserted.isEmpty {
                 self.jumpButton.isHidden = false
             }
             self.updateEmptyState()
@@ -257,7 +274,7 @@ final class TranslationViewController: UIViewController {
     }
 
     private func render(status: SessionStatus) {
-        statusView.show(status)
+        statusView.show(status, speaking: viewModel.speaking != nil)
         var configuration = startButton.configuration ?? .filled()
         if status.isRunning {
             configuration.title = String(localized: "Stop")
@@ -294,6 +311,16 @@ final class TranslationViewController: UIViewController {
         }
     }
 
+    private func renderSpeechToggle() {
+        let on = viewModel.speaksTranslations
+        var configuration = on ? UIButton.Configuration.tinted() : UIButton.Configuration.gray()
+        configuration.cornerStyle = .capsule
+        configuration.buttonSize = .large
+        configuration.image = UIImage(systemName: on ? "speaker.wave.2.fill" : "speaker.slash.fill")
+        speakButton.configuration = configuration
+        speakButton.accessibilityValue = on ? String(localized: "On") : String(localized: "Off")
+    }
+
     private func updateEmptyState() {
         tableView.backgroundView = viewModel.phrases.isEmpty ? emptyLabel : nil
     }
@@ -309,6 +336,132 @@ final class TranslationViewController: UIViewController {
         guard !text.isEmpty else { return }
         UIPasteboard.general.string = text
         UIAccessibility.post(notification: .announcement, argument: String(localized: "Copied"))
+    }
+}
+
+// MARK: - Conversation files
+
+extension TranslationViewController: UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {
+    private func saveConversation() {
+        let archive = ConversationArchive(phrases: viewModel.phrases)
+        guard !archive.isEmpty else {
+            showFileAlert(String(localized: "Nothing to Save"), message: String(localized: "A conversation needs at least one finalized caption."))
+            return
+        }
+        do {
+            let file = try archive.writeForExport()
+            pendingExport = file
+            let picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
+            picker.delegate = self
+            picker.presentationController?.delegate = self
+            present(picker, animated: true)
+        } catch {
+            showFileAlert(String(localized: "Couldn’t Save Conversation"), message: String(localized: "The conversation file couldn’t be created."))
+        }
+    }
+
+    private func chooseConversationFile() {
+        guard viewModel.status == .idle else {
+            showMustStopAlert()
+            return
+        }
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json], asCopy: true)
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        if pendingExport != nil {
+            discardPendingExport()
+            UIAccessibility.post(notification: .announcement, argument: String(localized: "Conversation saved"))
+            return
+        }
+        guard let file = urls.first else { return }
+        let load = { [weak self] in self?.readConversationFile(file) }
+        if controller.isBeingDismissed, let transition = controller.transitionCoordinator,
+           transition.animate(alongsideTransition: nil, completion: { _ in load() }) {
+            return
+        }
+        if controller.presentingViewController != nil {
+            controller.dismiss(animated: true) { load() }
+        } else {
+            load()
+        }
+    }
+
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        discardPendingExport()
+    }
+
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        discardPendingExport()
+    }
+
+    private func discardPendingExport() {
+        guard let file = pendingExport else { return }
+        pendingExport = nil
+        try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+    }
+
+    private func readConversationFile(_ file: URL) {
+        let read = Task.detached {
+            // Files gave us a temporary import copy.
+            defer { try? FileManager.default.removeItem(at: file) }
+            let data = try Data(contentsOf: file, options: .mappedIfSafe)
+            return try ConversationArchive(data: data, maxPhrases: TranslationViewModel.maxPhrases)
+        }
+        Task { [weak self] in
+            let result = await read.result
+            guard let self else { return }
+            switch result {
+            case .success(let archive):
+                self.confirmLoading(archive)
+            case .failure(ConversationArchive.FileError.unsupportedVersion):
+                self.showFileAlert(String(localized: "Couldn’t Load Conversation"), message: String(localized: "This version of the conversation file isn’t supported."))
+            case .failure:
+                self.showFileAlert(String(localized: "Couldn’t Load Conversation"), message: String(localized: "Choose a valid conversation file saved by Translator."))
+            }
+        }
+    }
+
+    private func confirmLoading(_ archive: ConversationArchive) {
+        guard viewModel.status == .idle else {
+            showMustStopAlert()
+            return
+        }
+        guard !viewModel.phrases.isEmpty else {
+            replaceConversation(with: archive)
+            return
+        }
+        let alert = UIAlertController(
+            title: String(localized: "Replace Current Conversation?"),
+            message: String(localized: "Loading this file will replace the captions on screen."),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: String(localized: "Replace"), style: .destructive) { [weak self] _ in
+            self?.replaceConversation(with: archive)
+        })
+        present(alert, animated: true)
+    }
+
+    private func replaceConversation(with archive: ConversationArchive) {
+        followsLatest = true
+        if viewModel.replaceConversation(with: archive) {
+            UIAccessibility.post(notification: .announcement, argument: String(localized: "Conversation loaded"))
+        } else {
+            showMustStopAlert()
+        }
+    }
+
+    private func showMustStopAlert() {
+        showFileAlert(String(localized: "Stop Before Loading"), message: String(localized: "Stop listening and wait for the last captions to finish before loading a conversation."))
+    }
+
+    private func showFileAlert(_ title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .default))
+        present(alert, animated: true)
     }
 }
 

@@ -4,11 +4,13 @@
 //   WS   /stt/v1/transcribe:streamBidirectional       streaming STT
 //   POST /v1/chat/completions                         chat completions (SSE)
 //   GET  /llm/v1alpha/models                          the key check in Settings
+//   POST /tts/v1/voice:stream                         streaming TTS (NDJSON)
 //
 // The STT socket does not recognize speech. It plays back a script, paced by
 // how much audio it has received, so interims, revisions, finals, and turn
-// gaps arrive with realistic timing. Message shapes and the authentication
-// failure behavior follow the Inworld docs and the live endpoint.
+// gaps arrive with realistic timing. TTS does not speak either: it answers
+// with a tone as long as the text would take to say. Message shapes and the
+// authentication failure behavior follow the Inworld docs and the live endpoint.
 //
 // Run:  node server.mjs [--port 8788]
 
@@ -44,11 +46,12 @@ export async function startMockInworld({
   finalDelayMs = 500,
   gapMs = 900,
   chunkDelayMs = 30,
+  speechMsPerCharacter = 60,
   verbose = false,
 } = {}) {
   const sockets = new Set();
-  const stats = { sttConnections: 0, sttAuthFailures: 0, completions: 0, audioMs: 0 };
-  const received = { lastCompletion: null, lastSTTConfig: null }; // request bodies, for assertions
+  const stats = { sttConnections: 0, sttAuthFailures: 0, completions: 0, audioMs: 0, speechRequests: 0, speechCharacters: 0 };
+  const received = { lastCompletion: null, lastSTTConfig: null, lastSpeech: null }; // request bodies, for assertions
 
   // Failure injection, settable from tests or POST /__mock/faults.
   const faults = {
@@ -57,6 +60,9 @@ export async function startMockInworld({
     completionStatus: 500,
     stallCompletionMs: 0, // delay before the first completion chunk
     breakCompletions: 0, // end the next N completion streams without [DONE]
+    failSpeech: 0, // fail the next N TTS requests with speechStatus
+    speechStatus: 500,
+    breakSpeech: 0, // fail the next N TTS streams halfway, with an in-band error
   };
 
   const translations = new Map(script.map((line) => [line.text, line]));
@@ -149,10 +155,53 @@ export async function startMockInworld({
     res.end('data: [DONE]\n\n');
   }
 
+  // A quiet 220 Hz tone, about as long as the text takes to say, in chunks
+  // of 100 ms. PCM is headerless signed 16-bit little-endian mono.
+  async function handleSpeech(req, res) {
+    if (!hasApiKey(req)) return json(res, 401, { error: { message: 'Unauthorized' } });
+    const body = await readBody(req);
+    stats.speechRequests += 1;
+    received.lastSpeech = body;
+    const text = body.text ?? '';
+    if (!text || !body.voiceId || !body.modelId) {
+      return json(res, 400, { code: 3, message: 'text, voiceId and modelId are required', details: [] });
+    }
+    if (faults.failSpeech > 0) {
+      faults.failSpeech -= 1;
+      return json(res, faults.speechStatus, { code: 13, message: 'injected failure', details: [] });
+    }
+    stats.speechCharacters += text.length;
+
+    const rate = body.audioConfig?.sampleRateHertz ?? 24000;
+    const samples = Math.round((Math.max(300, text.length * speechMsPerCharacter) / 1000) * rate);
+    const chunkSamples = rate / 10;
+    const chunks = Math.ceil(samples / chunkSamples);
+    const breakAt = faults.breakSpeech > 0 ? Math.ceil(chunks / 2) : -1;
+    if (breakAt !== -1) faults.breakSpeech -= 1;
+
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    for (let index = 0; index < chunks; index += 1) {
+      await sleep(chunkDelayMs);
+      if (res.destroyed) return;
+      if (index === breakAt) {
+        return res.end(`${JSON.stringify({ error: { code: 13, message: 'injected failure', details: [] } })}\n`);
+      }
+      const start = index * chunkSamples;
+      const pcm = Buffer.alloc(Math.min(chunkSamples, samples - start) * 2);
+      for (let i = 0; i < pcm.length / 2; i += 1) {
+        pcm.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 220 * (start + i)) / rate) * 3000), i * 2);
+      }
+      const usage = { processedCharactersCount: index === chunks - 1 ? text.length : 0, modelId: body.modelId };
+      res.write(`${JSON.stringify({ result: { audioContent: pcm.toString('base64'), usage } })}\n`);
+    }
+    res.end();
+  }
+
   const server = createServer(async (req, res) => {
     try {
       const { pathname } = new URL(req.url, 'http://localhost');
       if (req.method === 'POST' && pathname === '/v1/chat/completions') return await handleCompletion(req, res);
+      if (req.method === 'POST' && pathname === '/tts/v1/voice:stream') return await handleSpeech(req, res);
       // The app's key check: lists models, and fails with 401 for a bad key.
       if (req.method === 'GET' && pathname === '/llm/v1alpha/models') {
         if (!hasApiKey(req)) return json(res, 401, { error: { message: 'Unauthorized' } });

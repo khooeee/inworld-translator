@@ -49,3 +49,48 @@ final class MeteredTranslator: Translating {
         }
     }
 }
+
+/// Passes speech through and records how much was asked for and how long the
+/// audio took to start.
+final class MeteredSynthesizer: SpeechSynthesizing {
+    private let inner: any SpeechSynthesizing
+    private let totals = Mutex((requests: 0, failures: 0, characters: 0, firstAudio: [Double]()))
+
+    init(_ inner: any SpeechSynthesizing) {
+        self.inner = inner
+    }
+
+    var usage: (requests: Int, failures: Int, characters: Int, firstAudio: [Double]) {
+        totals.withLock { $0 }
+    }
+
+    func synthesize(_ text: String) -> AsyncThrowingStream<Data, Error> {
+        let upstream = inner.synthesize(text)
+        let requestedAt = Date()
+        totals.withLock {
+            $0.requests += 1
+            $0.characters += text.count
+        }
+        return AsyncThrowingStream { continuation in
+            let task = Task { [self] in
+                do {
+                    var started = false
+                    for try await chunk in upstream {
+                        if !started {
+                            started = true
+                            self.totals.withLock { $0.firstAudio.append(Date().timeIntervalSince(requestedAt)) }
+                        }
+                        continuation.yield(chunk)
+                    }
+                    continuation.finish()
+                } catch {
+                    if !(error is CancellationError) {
+                        self.totals.withLock { $0.failures += 1 }
+                    }
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}

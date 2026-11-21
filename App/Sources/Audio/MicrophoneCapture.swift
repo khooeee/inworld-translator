@@ -5,14 +5,25 @@ import Synchronization
 import TranslatorCore
 
 /// Captures the microphone with `AVAudioEngine` and delivers 100 ms chunks of
-/// 16 kHz mono PCM16, which is what Inworld STT expects.
+/// 16 kHz mono PCM16, which is what Inworld STT expects. Also plays spoken
+/// English through the same engine.
 ///
 /// Recovers by itself from route changes (headphones, Bluetooth, unplugging),
 /// and reports interruptions such as phone calls so the session can pause.
-actor MicrophoneCapture: AudioCapturing {
+///
+/// While speech plays, and for a moment after, the microphone delivers
+/// silence instead of what it hears, so the phone never translates itself.
+actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     private static let log = Logger(subsystem: "InworldTranslator", category: "audio")
+    /// How long the microphone stays muted after speech ends, for the sound
+    /// still in the air and in the capture pipeline.
+    private static let echoTail: Duration = .milliseconds(300)
 
     private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private let speechFormat = AVAudioFormat(standardFormatWithSampleRate: Double(SpeechAudio.sampleRate), channels: 1)!
+    private let gate = SpeechGate()
+    private var playback: PlaybackTracker?
     private var converter: PCMConverter?
     private var chunks: AsyncStream<AudioChunk>.Continuation?
     private var events: AsyncStream<AudioCaptureEvent>.Continuation?
@@ -29,8 +40,9 @@ actor MicrophoneCapture: AudioCapturing {
         let session = AVAudioSession.sharedInstance()
         do {
             // Default mode keeps the system's gain control, which helps with
-            // speakers at different distances from the phone.
-            try session.setCategory(.record, mode: .default, options: [.allowBluetoothHFP])
+            // speakers at different distances from the phone. Play-and-record
+            // is for spoken English, which goes to the speaker, not the earpiece.
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
             try session.setPreferredIOBufferDuration(0.02)
             try session.setActive(true)
         } catch {
@@ -62,9 +74,11 @@ actor MicrophoneCapture: AudioCapturing {
             NotificationCenter.default.removeObserver(observer)
         }
         observers.removeAll()
+        cutPlayback()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         converter = nil
+        gate.reset()
         if isRunning {
             // Let other apps' audio resume now that the microphone is free.
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -86,13 +100,17 @@ actor MicrophoneCapture: AudioCapturing {
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw AudioCaptureError.unavailable
         }
-        guard let chunks, let converter = PCMConverter(from: format, chunks: chunks) else {
+        guard let chunks, let converter = PCMConverter(from: format, chunks: chunks, gate: gate) else {
             throw AudioCaptureError.unavailable
         }
         self.converter = converter
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
             converter.convert(buffer)
         }
+        if player.engine == nil {
+            engine.attach(player)
+        }
+        engine.connect(player, to: engine.mainMixerNode, format: speechFormat)
         engine.prepare()
         try engine.start()
         Self.log.info("Capturing at \(format.sampleRate, privacy: .public) Hz, \(format.channelCount, privacy: .public) ch")
@@ -102,6 +120,7 @@ actor MicrophoneCapture: AudioCapturing {
     private func restartEngine(reason: String) {
         guard isRunning, !isInterrupted else { return }
         Self.log.info("Restarting audio engine: \(reason, privacy: .public)")
+        cutPlayback()
         engine.stop()
         do {
             try startEngine()
@@ -146,6 +165,7 @@ actor MicrophoneCapture: AudioCapturing {
         switch type {
         case .began:
             isInterrupted = true
+            cutPlayback()
             engine.stop()
             events?.yield(.interruptionBegan)
         case .ended:
@@ -173,6 +193,72 @@ actor MicrophoneCapture: AudioCapturing {
         events?.yield(.failed)
     }
 
+    // MARK: SpeechPlaying
+
+    func play(_ audio: AsyncThrowingStream<Data, any Error>) async throws {
+        guard isRunning, !isInterrupted, engine.isRunning else { throw AudioCaptureError.unavailable }
+        let tracker = PlaybackTracker()
+        playback?.cancel()
+        playback = tracker
+        gate.close()
+        defer {
+            player.stop()
+            gate.open(after: Self.echoTail)
+            if playback === tracker { playback = nil }
+        }
+
+        try await withTaskCancellationHandler {
+            // Chunks need not hold whole samples; carry a stray byte over.
+            var pending = Data()
+            for try await data in audio {
+                guard !tracker.isCancelled else { break }
+                pending.append(data)
+                let usable = pending.count - pending.count % 2
+                guard usable > 0, let buffer = makeBuffer(pending.prefix(usable)) else { continue }
+                pending.removeFirst(usable)
+                // Starting a player on a stopped engine raises an exception.
+                guard engine.isRunning else {
+                    tracker.cancel()
+                    break
+                }
+                tracker.scheduled()
+                player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
+                    tracker.played()
+                }
+                if !player.isPlaying {
+                    player.play()
+                }
+            }
+            await tracker.waitUntilPlayed()
+        } onCancel: {
+            tracker.cancel()
+        }
+        try Task.checkCancellation()
+    }
+
+    /// Stops speech at once, for when the engine is about to stop.
+    private func cutPlayback() {
+        playback?.cancel()
+        playback = nil
+        player.stop()
+    }
+
+    private func makeBuffer(_ pcm: Data) -> AVAudioPCMBuffer? {
+        let frames = pcm.count / 2
+        guard frames > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: speechFormat, frameCapacity: AVAudioFrameCount(frames)),
+              let channel = buffer.floatChannelData?[0]
+        else { return nil }
+        pcm.withUnsafeBytes { raw in
+            for index in 0..<frames {
+                let sample = Int16(littleEndian: raw.loadUnaligned(fromByteOffset: index * 2, as: Int16.self))
+                channel[index] = Float(sample) / 32_768
+            }
+        }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        return buffer
+    }
+
     // MARK: Permission
 
     static func requestPermission() async -> Bool {
@@ -184,7 +270,90 @@ actor MicrophoneCapture: AudioCapturing {
     }
 }
 
+/// Mutes the microphone while speech plays and for a short tail after it.
+/// Read from the audio tap, set from the capture actor.
+private final class SpeechGate: Sendable {
+    private struct State {
+        var playing = false
+        var mutedUntil: ContinuousClock.Instant?
+    }
+
+    private let state = Mutex(State())
+
+    var isMuted: Bool {
+        state.withLock { state in
+            state.playing || state.mutedUntil.map { ContinuousClock.now < $0 } ?? false
+        }
+    }
+
+    func close() {
+        state.withLock { $0.playing = true }
+    }
+
+    func open(after tail: Duration) {
+        state.withLock {
+            $0.playing = false
+            $0.mutedUntil = .now + tail
+        }
+    }
+
+    func reset() {
+        state.withLock { $0 = State() }
+    }
+}
+
+/// Counts speech buffers through the player, so `play` can wait until the
+/// last one has been heard. Completion handlers arrive on an audio thread.
+private final class PlaybackTracker: Sendable {
+    private struct State {
+        var outstanding = 0
+        var cancelled = false
+        var waiter: CheckedContinuation<Void, Never>?
+    }
+
+    private let state = Mutex(State())
+
+    var isCancelled: Bool { state.withLock { $0.cancelled } }
+
+    func scheduled() {
+        state.withLock { $0.outstanding += 1 }
+    }
+
+    func played() {
+        let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            state.outstanding -= 1
+            guard state.outstanding <= 0 else { return nil }
+            defer { state.waiter = nil }
+            return state.waiter
+        }
+        waiter?.resume()
+    }
+
+    /// Ends playback early: whoever is waiting returns now.
+    func cancel() {
+        let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            state.cancelled = true
+            defer { state.waiter = nil }
+            return state.waiter
+        }
+        waiter?.resume()
+    }
+
+    /// Returns once every scheduled buffer has played, or on cancel.
+    func waitUntilPlayed() async {
+        await withCheckedContinuation { continuation in
+            let done = state.withLock { state -> Bool in
+                if state.cancelled || state.outstanding <= 0 { return true }
+                state.waiter = continuation
+                return false
+            }
+            if done { continuation.resume() }
+        }
+    }
+}
+
 /// Converts tap buffers to 16 kHz mono PCM16 and cuts them into 100 ms chunks.
+/// While the gate is muted, the audio is replaced with silence.
 ///
 /// Used only from the audio tap, which runs its callbacks one at a time on a
 /// single thread; the lock makes that assumption safe rather than relying on it.
@@ -202,8 +371,9 @@ private final class PCMConverter: Sendable {
 
     private let state: Mutex<State>
     private let chunks: AsyncStream<AudioChunk>.Continuation
+    private let gate: SpeechGate
 
-    init?(from input: AVAudioFormat, chunks: AsyncStream<AudioChunk>.Continuation) {
+    init?(from input: AVAudioFormat, chunks: AsyncStream<AudioChunk>.Continuation, gate: SpeechGate) {
         guard
             let outputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Self.outputRate, channels: 1, interleaved: true),
             let converter = AVAudioConverter(from: input, to: outputFormat),
@@ -212,12 +382,14 @@ private final class PCMConverter: Sendable {
         else { return nil }
         state = Mutex(State(converter: converter, output: output))
         self.chunks = chunks
+        self.gate = gate
     }
 
     func convert(_ buffer: AVAudioPCMBuffer) {
         // The tap's buffer is only valid during the callback; the converter
         // copies out of it synchronously below.
         nonisolated(unsafe) let input = buffer
+        let muted = gate.isMuted
         let ready: [Data] = state.withLock { state in
             var consumed = false
             var error: NSError?
@@ -232,7 +404,12 @@ private final class PCMConverter: Sendable {
                 return input
             }
             guard status != .error, let samples = state.output.int16ChannelData?[0] else { return [] }
-            state.pending.append(contentsOf: UnsafeBufferPointer(start: samples, count: Int(state.output.frameLength)))
+            let count = Int(state.output.frameLength)
+            if muted {
+                state.pending.append(contentsOf: repeatElement(0, count: count))
+            } else {
+                state.pending.append(contentsOf: UnsafeBufferPointer(start: samples, count: count))
+            }
 
             var ready: [Data] = []
             while state.pending.count >= Self.chunkSamples {

@@ -45,10 +45,11 @@ final class PhraseCell: UITableViewCell {
         fatalError("init(coder:) is not supported")
     }
 
-    func configure(with phrase: Phrase) {
+    func configure(with phrase: Phrase, isSpeaking: Bool = false) {
         let spokenInEnglish = phrase.isSpokenInEnglish
 
-        // Header: language, and whether the phrase is still being heard.
+        // Header: language, and whether the phrase is still being heard or
+        // is being read aloud.
         var header: [String] = []
         if phrase.sourceState == .provisional {
             header.append(String(localized: "Listening…"))
@@ -57,6 +58,9 @@ final class PhraseCell: UITableViewCell {
         }
         if phrase.sourceState == .interrupted {
             header.append(String(localized: "cut off"))
+        }
+        if isSpeaking {
+            header.append(String(localized: "Speaking"))
         }
         headerLabel.text = header.joined(separator: " · ")
         headerLabel.isHidden = header.isEmpty

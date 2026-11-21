@@ -204,6 +204,26 @@ public protocol Translating: Sendable {
     func translate(_ request: TranslationRequest) -> AsyncThrowingStream<TranslationUpdate, Error>
 }
 
+// MARK: - Speech out
+
+/// Spoken English: 24 kHz mono signed 16-bit little-endian PCM.
+public enum SpeechAudio {
+    public static let sampleRate = 24_000
+}
+
+public protocol SpeechSynthesizing: Sendable {
+    /// Streams `text` as `SpeechAudio`, chunk by chunk as it is generated.
+    /// Cancelling the consumer cancels the request.
+    func synthesize(_ text: String) -> AsyncThrowingStream<Data, Error>
+}
+
+public protocol SpeechPlaying: Sendable {
+    /// Plays `SpeechAudio` as it arrives and returns once all of it has been
+    /// heard. Throws `CancellationError` if the calling task is cancelled,
+    /// after stopping the sound. One call at a time.
+    func play(_ audio: AsyncThrowingStream<Data, Error>) async throws
+}
+
 // MARK: - Connectivity
 
 public protocol ConnectivityMonitoring: Sendable {

@@ -11,7 +11,8 @@ finished phrase into English.
 - Recognition covers the
   [30 languages of Inworld STT-1](https://docs.inworld.ai/stt/languages). The
   app lists them under **⋯ → Supported Languages**.
-- This version shows captions only; spoken playback is not built yet.
+- Optionally, the phone reads each English translation aloud with Inworld
+  TTS. Turn it on with the speaker button next to **Start**.
 
 UIKit built in code, Swift 6 language mode with complete strict concurrency,
 iOS 18 or later.
@@ -85,6 +86,14 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
                                             │  "<language>\n<English>"
                                             ▼
                            @MainActor TranslationViewModel ─▶ UITableView
+                                            │
+              (speech on) each finished English phrase, in spoken order
+                                            ▼
+                                  SpeechQueue ─▶ Inworld TTS  inworld-tts-2-flash
+                                            │  streamed 24 kHz PCM
+                                            ▼
+                                  AVAudioPlayerNode on the same engine
+                                  (microphone muted while it plays)
 ```
 
 ### Code layout
@@ -96,14 +105,15 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
 | `App/Sources` | UIKit app: screen, cells, microphone capture, Keychain, key screen. |
 | `App/Tests` | View model unit tests. |
 | `App/UITests` | UI tests against the mock server. |
-| `tools/mock-inworld` | Local stand-in for the Inworld endpoints. |
+| `tools/mock-inworld` | Local stand-in for the Inworld endpoints, including TTS. |
 | `tools/samples` | Speech sample manifest (27 languages) and generator. |
 | `tools/icon` | Script that draws the app icon: `swift tools/icon/make_icon.swift`. |
 
 ### Concurrency
 
 - `TranslationSession`, `TranslationPipeline` and `MicrophoneCapture` are
-  actors.
+  actors. `SpeechQueue` is a `Mutex`-guarded class, so requests reach it in
+  exactly the order the session makes them.
 - The view model and all UI are `@MainActor`.
 - Everything that crosses between them is a `Sendable` value type.
 - The audio tap converts on the audio thread behind a `Mutex`. It then hands
@@ -126,6 +136,34 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
 - **Order.** Captions keep spoken order whatever order translations finish
   in. Listening never pauses for translation.
 
+### Spoken English
+
+Off by default; the setting is remembered. When it is on:
+
+- **What is spoken.** The English of each finished phrase. Phrases spoken in
+  English, failed translations and unintelligible phrases are skipped.
+- **Order.** Phrases are spoken in the order they were heard, even when their
+  translations finish out of order. One phrase plays at a time.
+- **Taking turns.** Speech waits while someone is mid-sentence and starts at
+  the next pause. A phrase already playing finishes.
+- **No feedback loop.** While the phone speaks, and for 300 ms after, the
+  microphone sends silence instead of what it hears. Otherwise the phone
+  would caption its own voice. This is half-duplex, like the conversation
+  modes in Apple's and Google's translator apps: anything said over the
+  phone is not heard. The status line reads **Speaking English** meanwhile.
+- **Backlog.** At most 2 phrases wait behind the one playing. Past that, the
+  oldest waiting phrase is not spoken. Its caption is unaffected.
+- **Stop.** Stop, turning speech off, or a phone call silences speech at once.
+  Nothing more is said after Stop, even for translations that finish later.
+- **Failures.** If speech fails, a notice says so once per session. Captions
+  carry on.
+- **Audio.** The audio session is `.playAndRecord` with `.defaultToSpeaker`,
+  so speech comes from the loudspeaker, not the earpiece. Audio streams from
+  `/tts/v1/voice:stream` as raw 24 kHz PCM and starts playing with the first
+  chunk.
+- **Voice and cost.** Voice "Ashley", model `inworld-tts-2-flash`, billed at
+  about $15 per million characters.
+
 ### Session lifecycle
 
 - **Network loss.** Audio is held while the connection is down, up to 8 s,
@@ -147,7 +185,11 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
 - **Stop.** Stop releases the microphone first. It then closes the stream so
   the last words finalize, waits up to 6 s for translations in flight, and
   cancels the rest.
-- **History.** Captions are kept in memory only, capped at 2,000 phrases.
+- **History.** The app keeps up to 2,000 captions on screen. Use
+  **⋯ → Save Conversation** to save a JSON file in Files with finalized
+  originals and completed English translations. Use **⋯ → Load Conversation**
+  while the app is stopped to reopen a saved file. Loading asks before
+  replacing any captions already on screen.
 
 ## Security
 
@@ -175,9 +217,10 @@ xcodebuild test -project InworldTranslator.xcodeproj -scheme InworldTranslator \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-This runs 14 view-model tests and the 61 TranslatorCore tests.
+This runs 21 app tests (view model and languages screen) and the 78
+TranslatorCore tests.
 
-The 61 TranslatorCore tests also run on macOS. They are clean under Thread
+The 78 TranslatorCore tests also run on macOS. They are clean under Thread
 Sanitizer:
 
 ```sh
@@ -194,7 +237,9 @@ They cover:
 - authentication and quota errors;
 - cancellation on Stop;
 - the idle timeout;
-- the reply parser and HTTP error mapping.
+- the reply parser and HTTP error mapping;
+- speech: order, waiting for a pause, the backlog limit, Stop, turning it
+  off, phone calls, failures, and the TTS request and its errors.
 
 ### Mock server and samples
 
@@ -209,7 +254,9 @@ python3 -I tools/samples/make_samples.py     # writes tools/samples/out/*.pcm
 - error frames code 16 (no credentials) and code 7 (wrong key), matching the
   live endpoint;
 - streaming chat completions;
-- the key-check endpoint.
+- the key-check endpoint;
+- streaming TTS as NDJSON with base64 PCM. The audio is a quiet tone, about
+  60 ms per character of text.
 
 It does not recognize speech. It plays a fixed multilingual script paced by
 the audio it receives. Faults can be injected with `POST /__mock/faults` and
@@ -232,11 +279,17 @@ The tests cover:
 
 - **Captions and Stop.** Captions appear, Stop returns to Ready, and no audio
   reaches the server after Stop.
+- **Conversation files.** Save captions through Files, clear the screen, and
+  load the saved captions again.
 - **Key flow.**
   - Start without a key shows a notice.
   - A wrong key is rejected.
   - The right key is saved, the notice clears, and the saved key works for
     STT and translation.
+- **Spoken English.** The speaker toggle turns on, speech is requested, the
+  status shows **Speaking English**, and nothing more is requested after
+  Stop. The sample-file audio source stands in for the speaker, so nothing
+  is played out loud.
 
 ### The app in the Simulator, without a microphone
 
@@ -249,6 +302,9 @@ xcrun simctl launch booted com.example.InworldTranslator \
   -AudioSamplesDirectory "$PWD/tools/samples/out" \
   -AudioSampleIDs es-name-time,ja-phone,fr-injection -AutoStart YES
 ```
+
+Add `-SpeaksTranslations YES` to start with speech on. With sample files,
+speech is timed but not played aloud, and the next clip waits for it.
 
 ### Validation CLI: accuracy, language detection, latency, cost
 
@@ -268,6 +324,11 @@ The summary adds:
 - tokens and estimated cost;
 - memory.
 
+With `--speak` it also turns each translation into speech, without playing
+it. It reports characters, TTS cost, request → first audio latency, and
+whether anything was spoken out of order. Clips wait while speech "plays",
+as people would, so the run takes longer.
+
 ```sh
 cd Packages/TranslatorCore && swift build -c release --product translator-cli
 BIN=$(swift build -c release --show-bin-path)/translator-cli; cd ../..
@@ -277,6 +338,9 @@ INWORLD_API_KEY=... $BIN tools/samples/manifest.json --report tools/reports/live
 
 # Five languages back to back in one session, at real time:
 INWORLD_API_KEY=... $BIN tools/samples/manifest.json --only es-name-time,ja-phone,en-assistant-request,fr-injection,de-appointment
+
+# Spoken English too:
+INWORLD_API_KEY=... $BIN tools/samples/manifest.json --only es-name-time,ja-phone,fr-injection --speak
 
 # Against the mock, with a forced disconnect every 7 s:
 INWORLD_API_KEY=mock-api-key $BIN tools/samples/manifest.json \
@@ -293,9 +357,10 @@ Mock server, Simulator and macOS, November 2026.
 
 | Check | Result |
 | --- | --- |
-| Unit tests (Simulator) | 75/75 pass |
-| TranslatorCore under Thread Sanitizer | 61/61 pass, no reports |
-| UI tests against the mock | 2/2 pass |
+| Unit tests (Simulator) | 96/96 pass |
+| TranslatorCore under Thread Sanitizer | 78/78 pass, no reports |
+| UI tests against the mock | 3/3 pass |
+| Spoken English against the mock (`--speak`, 2×) | 5 of 5 non-English phrases spoken in order; the English phrase skipped; nothing spoken after Stop; integrity checks pass. |
 | All 32 samples, 4× speed | 51 phrases, all translated. Final → English p50 250 ms, p95 342 ms. Memory 13 → 19 MB. |
 | 64 clips with a forced STT drop every 7 s | 24 reconnects, 121/121 phrases translated, integrity checks pass, no notices. Memory flat at ~24 MB over 170 s. |
 | 8 injected translation failures (5 HTTP 500s, 3 streams cut before `[DONE]`) | 4 phrases marked "Couldn't translate" after a retry; the other 9 translated. Listening continued, integrity checks pass. |
@@ -308,6 +373,15 @@ are not Inworld's speeds. The CER and language columns are meaningless against
 the mock, because it plays a script whatever audio it receives.
 
 ### Still to measure, with a real key on a real iPhone
+
+- [ ] **Spoken English.**
+  - Speech is clear from the loudspeaker, and the phone doesn't caption its
+    own voice.
+  - Time from caption to first sound.
+  - With AirPods connected, speech plays in them.
+
+  The Simulator on the development Mac has no microphone input, so the
+  speaker path (`MicrophoneCapture.play`) has only been compiled, not heard.
 
 - [ ] **Accuracy.** Recognition accuracy and language detection across the 27
   sample languages, from the live CLI run.
