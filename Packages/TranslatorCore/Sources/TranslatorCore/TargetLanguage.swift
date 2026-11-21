@@ -1,7 +1,6 @@
 import Foundation
 
-/// The app's language catalog, shared by the speech recognition list and
-/// the translation target picker.
+/// Translation targets drawn from the Inworld STT-1 language catalog.
 public enum TargetLanguage: String, CaseIterable, Codable, Sendable {
     case arabic = "ar"
     case cantonese = "yue"

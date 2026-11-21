@@ -10,9 +10,8 @@ switches mid-conversation. An LLM on Inworld translates each finished phrase.
   remembers your choice and uses it for the next listening session.
 - Each translation appears beneath the original words in the same caption.
   Speech already in the target language appears once.
-- Recognition covers the
-  [30 languages of Inworld STT-1](https://docs.inworld.ai/stt/languages). The
-  app lists them under **⋯ → Supported Languages**.
+- Recognition covers the same
+  [30 languages of Inworld STT-1](https://docs.inworld.ai/stt/languages).
 - Optionally, the phone reads each translation aloud with Inworld
   TTS. Turn it on with the speaker button next to **Start**.
 
@@ -56,7 +55,7 @@ Steps:
 
 3. Run the **InworldTranslator** scheme on your iPhone.
 
-4. In the app, tap the key button and paste the Base64 key from the Portal.
+4. In the app, open **⋯ → Inworld API Key** and paste the Base64 key from the Portal.
    Then tap **Check and Save**.
    - The app checks the key with Inworld before saving it.
    - A rejected key is not saved.

@@ -65,18 +65,14 @@ final class TranslationViewController: UIViewController {
             guard let self else { return }
             self.copy(self.viewModel.transcript())
         }
-        let languages = UIAction(title: String(localized: "Supported Languages"), image: UIImage(systemName: "globe")) { [weak self] _ in
-            self?.navigationController?.pushViewController(SupportedLanguagesViewController(), animated: true)
+        let apiKey = UIAction(title: String(localized: "Inworld API Key"), image: UIImage(systemName: "key")) { [weak self] _ in
+            self?.openAPIKeySettings()
         }
         let conversation = UIMenu(options: .displayInline, children: [newConversation, load, save, copyAll])
-        let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), menu: UIMenu(children: [conversation, languages]))
+        let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), menu: UIMenu(children: [conversation, apiKey]))
         more.preferredMenuElementOrder = .fixed
         more.accessibilityLabel = String(localized: "More")
-        let settings = UIBarButtonItem(image: UIImage(systemName: "key"), primaryAction: UIAction { [weak self] _ in
-            self?.openAPIKeySettings()
-        })
-        settings.accessibilityLabel = String(localized: "API key")
-        navigationItem.rightBarButtonItems = [more, settings]
+        navigationItem.rightBarButtonItem = more
     }
 
     private func configureHeader() {
@@ -88,9 +84,9 @@ final class TranslationViewController: UIViewController {
         targetButton.accessibilityLabel = String(localized: "Translate to")
         targetButton.addAction(UIAction { [weak self] _ in
             guard let self, self.viewModel.canChangeTargetLanguage else { return }
-            let picker = SupportedLanguagesViewController(selection: (self.viewModel.targetLanguage, { [weak self] language in
+            let picker = TargetLanguagePickerViewController(current: self.viewModel.targetLanguage) { [weak self] language in
                 self?.viewModel.setTargetLanguage(language)
-            }))
+            }
             self.navigationController?.pushViewController(picker, animated: true)
         }, for: .primaryActionTriggered)
 
