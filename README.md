@@ -5,9 +5,10 @@ choose. Inworld's speech-to-text detects the spoken language and follows
 switches mid-conversation. An LLM on Inworld translates each finished phrase.
 
 - Words appear while they are spoken, in italics, and settle when the phrase is final.
-- **From** and **To** sit side by side above the connection status.
-  While the app is **Ready**, choose from any of the 30 languages. The
-  defaults are **Auto Detect** for the source and **English** for the
+- **From** and **To** sit side by side above the captions. Below **Start**,
+  the microphone meter fills the space to the right of the connection
+  status. While the app is **Ready**, choose from any of the 30 languages.
+  The defaults are **Auto Detect** for the source and **English** for the
   target. The app remembers both choices for the next listening session.
 - A specific source language sets the language used for translation and
   caption labels. It also gives Inworld speech recognition a language hint.

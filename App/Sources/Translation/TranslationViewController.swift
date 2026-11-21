@@ -2,15 +2,14 @@ import TranslatorCore
 import UIKit
 import UniformTypeIdentifiers
 
-/// Language choices, connection status, and microphone level above the
-/// conversation, with listening and speech controls at the bottom.
+/// Language choices above the conversation, with listening controls,
+/// connection status, and microphone level at the bottom.
 final class TranslationViewController: UIViewController {
     private let viewModel: TranslationViewModel
     private let openAPIKeySettings: () -> Void
 
     private let statusView = ConnectionStatusView()
     private let levelMeter = LevelMeterView()
-    private let headerStack = UIStackView()
     private let sourceButton = UIButton(configuration: .tinted())
     private let targetButton = UIButton(configuration: .tinted())
     private let tableView = UITableView(frame: .zero, style: .plain)
@@ -79,17 +78,6 @@ final class TranslationViewController: UIViewController {
     private func configureHeader() {
         configureLanguageButton(sourceButton, mode: .source)
         configureLanguageButton(targetButton, mode: .target)
-
-        headerStack.addArrangedSubview(statusView)
-        headerStack.addArrangedSubview(levelMeter)
-        headerStack.spacing = 12
-        headerStack.alignment = .center
-        headerStack.translatesAutoresizingMaskIntoConstraints = false
-        levelMeter.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        updateHeaderAxis()
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
-            self.updateHeaderAxis()
-        }
     }
 
     private func configureLanguageButton(_ button: UIButton, mode: LanguagePickerViewController.Mode) {
@@ -118,13 +106,6 @@ final class TranslationViewController: UIViewController {
         }, for: .primaryActionTriggered)
     }
 
-    /// At accessibility text sizes the status needs the full width.
-    private func updateHeaderAxis() {
-        let large = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
-        headerStack.axis = large ? .vertical : .horizontal
-        headerStack.alignment = large ? .leading : .center
-    }
-
     private func configureTable() {
         tableView.register(PhraseCell.self, forCellReuseIdentifier: PhraseCell.reuseIdentifier)
         tableView.delegate = self
@@ -142,7 +123,7 @@ final class TranslationViewController: UIViewController {
         }
         dataSource.defaultRowAnimation = .fade
 
-        emptyLabel.text = String(localized: "Tap Start to listen. Captions and translations appear here.")
+        emptyLabel.text = String(localized: "Tap Start to listen.")
         emptyLabel.font = .preferredFont(forTextStyle: .body)
         emptyLabel.adjustsFontForContentSizeCategory = true
         emptyLabel.textColor = .secondaryLabel
@@ -214,13 +195,18 @@ final class TranslationViewController: UIViewController {
 
         let controls = UIStackView(arrangedSubviews: [speakButton, startButton])
         controls.spacing = 12
-        let bottomStack = UIStackView(arrangedSubviews: [noticeView, controls])
+
+        let statusRow = UIStackView(arrangedSubviews: [statusView, levelMeter])
+        statusRow.alignment = .center
+        statusRow.spacing = 12
+
+        let bottomStack = UIStackView(arrangedSubviews: [noticeView, controls, statusRow])
         bottomStack.axis = .vertical
         bottomStack.spacing = 12
+        bottomStack.setCustomSpacing(8, after: controls)
         bottomStack.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(languageRow)
-        view.addSubview(headerStack)
         view.addSubview(tableView)
         view.addSubview(jumpButton)
         view.addSubview(bottomStack)
@@ -233,11 +219,7 @@ final class TranslationViewController: UIViewController {
             languageRow.trailingAnchor.constraint(equalTo: readable.trailingAnchor),
             languageRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
 
-            headerStack.topAnchor.constraint(equalTo: languageRow.bottomAnchor, constant: 8),
-            headerStack.leadingAnchor.constraint(equalTo: readable.leadingAnchor),
-            headerStack.trailingAnchor.constraint(lessThanOrEqualTo: readable.trailingAnchor),
-
-            tableView.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 8),
+            tableView.topAnchor.constraint(equalTo: languageRow.bottomAnchor, constant: 8),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: bottomStack.topAnchor, constant: -8),
@@ -250,6 +232,7 @@ final class TranslationViewController: UIViewController {
             bottomStack.bottomAnchor.constraint(equalTo: margins.bottomAnchor, constant: -8),
             startButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
             speakButton.widthAnchor.constraint(equalTo: speakButton.heightAnchor),
+            levelMeter.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
         tableView.cellLayoutMarginsFollowReadableWidth = true
     }
