@@ -53,6 +53,13 @@ final class TranslationViewController: UIViewController {
     }
 
     private func configureNavigationItems() {
+        func copyAction(_ content: TranslationViewModel.TranscriptContent, title: String, icon: String) -> UIAction {
+            UIAction(title: title, image: UIImage(systemName: icon)) { [weak self] _ in
+                guard let self else { return }
+                self.copy(self.viewModel.transcript(content))
+            }
+        }
+
         let newConversation = UIAction(title: String(localized: "New"), image: UIImage(systemName: "doc.badge.plus")) { [weak self] _ in
             self?.viewModel.clear()
         }
@@ -62,15 +69,16 @@ final class TranslationViewController: UIViewController {
         let save = UIAction(title: String(localized: "Save"), image: UIImage(systemName: "square.and.arrow.down")) { [weak self] _ in
             self?.saveConversation()
         }
-        let copyAll = UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-            guard let self else { return }
-            self.copy(self.viewModel.transcript())
-        }
         let apiKey = UIAction(title: String(localized: "Inworld API Key"), image: UIImage(systemName: "key")) { [weak self] _ in
             self?.openAPIKeySettings()
         }
-        let conversation = UIMenu(options: .displayInline, children: [newConversation, load, save, copyAll])
-        let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), menu: UIMenu(children: [conversation, apiKey]))
+        let conversation = UIMenu(options: .displayInline, children: [newConversation, load, save])
+        let copy = UIMenu(options: .displayInline, children: [
+            copyAction(.original, title: String(localized: "Copy Original"), icon: "text.quote"),
+            copyAction(.translation, title: String(localized: "Copy Translation"), icon: "doc.on.doc"),
+            copyAction(.both, title: String(localized: "Copy Both"), icon: "doc.on.clipboard"),
+        ])
+        let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), menu: UIMenu(children: [conversation, copy, apiKey]))
         more.preferredMenuElementOrder = .fixed
         more.accessibilityLabel = String(localized: "More")
         navigationItem.rightBarButtonItem = more

@@ -21,6 +21,12 @@ final class TranslationViewModel {
         var removed: [PhraseID] = []
     }
 
+    enum TranscriptContent {
+        case original
+        case translation
+        case both
+    }
+
     /// Older phrases are dropped past this, so a long session stays bounded.
     nonisolated static let maxPhrases = 2000
     static let speaksTranslationsKey = "SpeaksTranslations"
@@ -195,10 +201,16 @@ final class TranslationViewModel {
     }
 
     /// The whole conversation as text, for copying.
-    func transcript() -> String {
+    func transcript(_ content: TranscriptContent) -> String {
         phrases
             .filter { $0.sourceState != .provisional }
-            .map(Self.text(for:))
+            .compactMap { phrase in
+                switch content {
+                case .original: phrase.sourceText
+                case .translation: phrase.isSpokenInTargetLanguage ? nil : phrase.translatedText
+                case .both: Self.text(for: phrase)
+                }
+            }
             .joined(separator: "\n\n")
     }
 
