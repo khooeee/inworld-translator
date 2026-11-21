@@ -8,8 +8,8 @@ final class LanguagePickerViewController: UITableViewController {
 
         var title: String {
             switch self {
-            case .source: String(localized: "Translate from")
-            case .target: String(localized: "Translate to")
+            case .source: String(localized: "From")
+            case .target: String(localized: "To")
             }
         }
     }

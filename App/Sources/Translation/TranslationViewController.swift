@@ -94,10 +94,14 @@ final class TranslationViewController: UIViewController {
 
     private func configureLanguageButton(_ button: UIButton, mode: LanguagePickerViewController.Mode) {
         button.configuration?.cornerStyle = .capsule
+        button.configuration?.buttonSize = .small
+        button.configuration?.titleLineBreakMode = .byTruncatingTail
         button.configuration?.image = UIImage(systemName: "chevron.down")
         button.configuration?.imagePlacement = .trailing
-        button.configuration?.imagePadding = 8
-        button.translatesAutoresizingMaskIntoConstraints = false
+        button.configuration?.imagePadding = 6
+        button.titleLabel?.numberOfLines = 1
+        button.titleLabel?.adjustsFontSizeToFitWidth = true
+        button.titleLabel?.minimumScaleFactor = 0.6
         button.accessibilityLabel = mode.title
         button.addAction(UIAction { [weak self] _ in
             guard let self, self.viewModel.canChangeLanguages else { return }
@@ -203,6 +207,11 @@ final class TranslationViewController: UIViewController {
     }
 
     private func layout() {
+        let languageRow = UIStackView(arrangedSubviews: [sourceButton, targetButton])
+        languageRow.distribution = .fillEqually
+        languageRow.spacing = 8
+        languageRow.translatesAutoresizingMaskIntoConstraints = false
+
         let controls = UIStackView(arrangedSubviews: [speakButton, startButton])
         controls.spacing = 12
         let bottomStack = UIStackView(arrangedSubviews: [noticeView, controls])
@@ -210,8 +219,7 @@ final class TranslationViewController: UIViewController {
         bottomStack.spacing = 12
         bottomStack.translatesAutoresizingMaskIntoConstraints = false
 
-        view.addSubview(sourceButton)
-        view.addSubview(targetButton)
+        view.addSubview(languageRow)
         view.addSubview(headerStack)
         view.addSubview(tableView)
         view.addSubview(jumpButton)
@@ -220,17 +228,12 @@ final class TranslationViewController: UIViewController {
         let margins = view.layoutMarginsGuide
         let readable = view.readableContentGuide
         NSLayoutConstraint.activate([
-            sourceButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            sourceButton.leadingAnchor.constraint(equalTo: readable.leadingAnchor),
-            sourceButton.trailingAnchor.constraint(lessThanOrEqualTo: readable.trailingAnchor),
-            sourceButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            languageRow.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            languageRow.leadingAnchor.constraint(equalTo: readable.leadingAnchor),
+            languageRow.trailingAnchor.constraint(equalTo: readable.trailingAnchor),
+            languageRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
 
-            targetButton.topAnchor.constraint(equalTo: sourceButton.bottomAnchor, constant: 4),
-            targetButton.leadingAnchor.constraint(equalTo: readable.leadingAnchor),
-            targetButton.trailingAnchor.constraint(lessThanOrEqualTo: readable.trailingAnchor),
-            targetButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-
-            headerStack.topAnchor.constraint(equalTo: targetButton.bottomAnchor, constant: 8),
+            headerStack.topAnchor.constraint(equalTo: languageRow.bottomAnchor, constant: 8),
             headerStack.leadingAnchor.constraint(equalTo: readable.leadingAnchor),
             headerStack.trailingAnchor.constraint(lessThanOrEqualTo: readable.trailingAnchor),
 
@@ -355,10 +358,10 @@ final class TranslationViewController: UIViewController {
 
     private func renderLanguages() {
         let source = viewModel.sourceLanguage?.name() ?? LanguagePickerViewController.autoDetectTitle
-        sourceButton.configuration?.title = String(localized: "Translate from · \(source)")
+        sourceButton.configuration?.title = String(localized: "From · \(source)")
         sourceButton.accessibilityValue = source
         let target = viewModel.targetLanguage.name()
-        targetButton.configuration?.title = String(localized: "Translate to · \(target)")
+        targetButton.configuration?.title = String(localized: "To · \(target)")
         targetButton.accessibilityValue = target
     }
 
