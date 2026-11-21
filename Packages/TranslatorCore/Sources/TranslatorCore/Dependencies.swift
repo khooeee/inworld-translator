@@ -183,10 +183,12 @@ public struct TranslationRequest: Sendable, Equatable {
     public let text: String
     /// Earlier phrases of the conversation, oldest first.
     public let context: [TranslationContextItem]
+    public let targetLanguage: TargetLanguage
 
-    public init(text: String, context: [TranslationContextItem]) {
+    public init(text: String, context: [TranslationContextItem], targetLanguage: TargetLanguage = .english) {
         self.text = text
         self.context = context
+        self.targetLanguage = targetLanguage
     }
 }
 
@@ -206,7 +208,7 @@ public protocol Translating: Sendable {
 
 // MARK: - Speech out
 
-/// Spoken English: 24 kHz mono signed 16-bit little-endian PCM.
+/// Spoken translations: 24 kHz mono signed 16-bit little-endian PCM.
 public enum SpeechAudio {
     public static let sampleRate = 24_000
 }
@@ -214,7 +216,13 @@ public enum SpeechAudio {
 public protocol SpeechSynthesizing: Sendable {
     /// Streams `text` as `SpeechAudio`, chunk by chunk as it is generated.
     /// Cancelling the consumer cancels the request.
-    func synthesize(_ text: String) -> AsyncThrowingStream<Data, Error>
+    func synthesize(_ text: String, language: TargetLanguage) -> AsyncThrowingStream<Data, Error>
+}
+
+public extension SpeechSynthesizing {
+    func synthesize(_ text: String) -> AsyncThrowingStream<Data, Error> {
+        synthesize(text, language: .english)
+    }
 }
 
 public protocol SpeechPlaying: Sendable {

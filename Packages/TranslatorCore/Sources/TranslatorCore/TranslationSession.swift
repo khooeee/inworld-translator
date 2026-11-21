@@ -1,20 +1,19 @@
 import Foundation
 
-/// What the UI needs from a session. Lets previews and tests substitute one.
+/// What the UI needs from a session.
 public protocol TranslationSessionControlling: Sendable {
     /// Everything that happens, in order. Single consumer.
     var events: AsyncStream<SessionEvent> { get }
-    func start() async
+    func start(targetLanguage: TargetLanguage) async
     /// Stops listening. The microphone is released first; the last results
     /// are then collected for a bounded time. `notice` tells the user why,
     /// when the stop was not their own doing.
     func stop(notice: SessionNotice?) async
-    /// Whether English translations are spoken aloud. Off at first.
+    /// Whether translations are spoken aloud. Off at first.
     func setSpeaksTranslations(_ enabled: Bool) async
 }
 
-/// Runs a listening session: microphone audio in, phrases with English
-/// translations out.
+/// Runs a listening session: microphone audio in, translated phrases out.
 ///
 /// The actor owns all session state. Audio flows capture → pump → STT socket;
 /// results flow STT socket → phrases → translation pipeline → events, and,
@@ -95,14 +94,15 @@ public actor TranslationSession: TranslationSessionControlling {
     // Speech
     private struct SpeechSlot {
         let id: PhraseID
+        let language: TargetLanguage
         var settled = false
         /// What to say once settled; nil for nothing.
-        var english: String?
+        var text: String?
     }
 
     private var speaksTranslations = false
     /// Finalized phrases, in the order they were heard, that will be spoken
-    /// once settled. A phrase waits for every one before it, so English is
+    /// once settled. A phrase waits for every one before it, so each is
     /// spoken in conversation order even when translations finish out of order.
     private var speechBacklog: [SpeechSlot] = []
     private var speechFailureNoticed = false
@@ -155,7 +155,7 @@ public actor TranslationSession: TranslationSessionControlling {
 
     // MARK: - Start and stop
 
-    public func start() {
+    public func start(targetLanguage: TargetLanguage = .english) {
         guard run == nil else { return }
         observeTranslations()
         observeSpeech()
@@ -171,7 +171,7 @@ public actor TranslationSession: TranslationSessionControlling {
         setStatus(.starting)
         let startup = Task {
             await previousFinish?.value
-            await self.startRun(id)
+            await self.startRun(id, targetLanguage: targetLanguage)
         }
         run = Run(id: id, startup: startup)
     }
@@ -196,7 +196,7 @@ public actor TranslationSession: TranslationSessionControlling {
         run?.id == runID
     }
 
-    private func startRun(_ id: Int) async {
+    private func startRun(_ id: Int, targetLanguage: TargetLanguage) async {
         guard isCurrent(id) else { return }
         suspended = false
         hasConnected = false
@@ -221,7 +221,7 @@ public actor TranslationSession: TranslationSessionControlling {
 
         let connectivityUpdates = connectivity.updates()
         run?.pump = Task { await self.pumpAudio(capture.chunks, runID: id) }
-        run?.supervisor = Task { await self.superviseConnection(runID: id) }
+        run?.supervisor = Task { await self.superviseConnection(runID: id, targetLanguage: targetLanguage) }
         run?.auxiliary = [
             Task {
                 for await event in capture.events {
@@ -373,7 +373,7 @@ public actor TranslationSession: TranslationSessionControlling {
 
     /// Keeps one STT connection open for the life of the run, reconnecting
     /// with exponential backoff when it drops.
-    private func superviseConnection(runID: Int) async {
+    private func superviseConnection(runID: Int, targetLanguage: TargetLanguage) async {
         var attempt = 0
         while isCurrent(runID), !Task.isCancelled {
             if suspended {
@@ -406,13 +406,13 @@ public actor TranslationSession: TranslationSessionControlling {
                 let connectedAt = now()
                 setStatus(.listening)
 
-                let failure = await receive(from: connection, id: id)
+                let failure = await receive(from: connection, id: id, runID: runID, targetLanguage: targetLanguage)
 
                 if connectionID == id {
                     self.connection = nil
                 }
                 // Whatever was on screen for the open turn is all there will be.
-                await commitCurrentPhrase(as: .interrupted)
+                await commitCurrentPhrase(as: .interrupted, runID: runID)
                 guard isCurrent(runID), !Task.isCancelled else { return }
 
                 // The same key and the same request would be rejected again.
@@ -493,10 +493,10 @@ public actor TranslationSession: TranslationSessionControlling {
 
     /// Handles results until the connection ends. Returns the error it ended
     /// with, or nil for a clean close.
-    private func receive(from connection: any STTConnection, id: Int) async -> Error? {
+    private func receive(from connection: any STTConnection, id: Int, runID: Int, targetLanguage: TargetLanguage) async -> Error? {
         do {
             for try await event in connection.events {
-                await handle(event, connectionID: id)
+                await handle(event, connectionID: id, runID: runID, targetLanguage: targetLanguage)
             }
             return nil
         } catch {
@@ -566,7 +566,7 @@ public actor TranslationSession: TranslationSessionControlling {
 
     // MARK: - Results in
 
-    private func handle(_ event: STTEvent, connectionID id: Int) async {
+    private func handle(_ event: STTEvent, connectionID id: Int, runID: Int, targetLanguage: TargetLanguage) async {
         // Results from a connection that has been replaced are stale.
         guard id == connectionID else { return }
         switch event {
@@ -580,7 +580,12 @@ public actor TranslationSession: TranslationSessionControlling {
                 current = phrase
                 emit(.phrase(phrase))
             } else {
-                let phrase = Phrase(id: makePhraseID(), sourceText: text, timing: PhraseTiming(startedAt: now()))
+                let phrase = Phrase(
+                    id: makePhraseID(),
+                    sourceText: text,
+                    targetLanguage: targetLanguage,
+                    timing: PhraseTiming(startedAt: now())
+                )
                 current = phrase
                 turnStartedAt = now()
                 endTurnRequested = false
@@ -588,7 +593,7 @@ public actor TranslationSession: TranslationSessionControlling {
             }
         case .final(let text):
             lastActivity = now()
-            await commit(text: text, as: .final)
+            await commit(text: text, as: .final, targetLanguage: targetLanguage, runID: runID)
         case .speechStarted, .speechStopped, .usage:
             break
         }
@@ -596,14 +601,14 @@ public actor TranslationSession: TranslationSessionControlling {
 
     /// Commits the open phrase with its last provisional text, when no final
     /// result is going to arrive for it.
-    private func commitCurrentPhrase(as state: Phrase.SourceState) async {
+    private func commitCurrentPhrase(as state: Phrase.SourceState, runID: Int? = nil) async {
         guard let current else { return }
-        await commit(text: current.sourceText, as: state)
+        await commit(text: current.sourceText, as: state, targetLanguage: current.targetLanguage, runID: runID)
     }
 
     /// Ends the current turn: the phrase becomes final and is queued for
     /// translation, exactly once.
-    private func commit(text: String, as state: Phrase.SourceState) async {
+    private func commit(text: String, as state: Phrase.SourceState, targetLanguage: TargetLanguage, runID: Int?) async {
         let existing = current
         current = nil
         turnStartedAt = nil
@@ -619,17 +624,22 @@ public actor TranslationSession: TranslationSessionControlling {
         }
 
         let timestamp = now()
-        var phrase = existing ?? Phrase(id: makePhraseID(), sourceText: text, timing: PhraseTiming(startedAt: timestamp))
+        var phrase = existing ?? Phrase(
+            id: makePhraseID(),
+            sourceText: text,
+            targetLanguage: targetLanguage,
+            timing: PhraseTiming(startedAt: timestamp)
+        )
         phrase.sourceText = text
         phrase.sourceState = state
         phrase.translation = .pending
         phrase.timing.finalizedAt = timestamp
         translating[phrase.id] = phrase
-        if speaksTranslations, run != nil, !suspended {
-            speechBacklog.append(SpeechSlot(id: phrase.id))
+        if speaksTranslations, let runID, isCurrent(runID), !suspended {
+            speechBacklog.append(SpeechSlot(id: phrase.id, language: phrase.targetLanguage))
         }
         emit(.phrase(phrase))
-        await pipeline.submit(id: phrase.id, text: text)
+        await pipeline.submit(id: phrase.id, text: text, targetLanguage: phrase.targetLanguage)
     }
 
     private func makePhraseID() -> PhraseID {
@@ -708,12 +718,11 @@ public actor TranslationSession: TranslationSessionControlling {
     private func settleSpeech(for phrase: Phrase) {
         guard let index = speechBacklog.firstIndex(where: { $0.id == phrase.id }) else { return }
         speechBacklog[index].settled = true
-        // English speech needs no repeating, and failures have nothing to say.
-        speechBacklog[index].english = phrase.isSpokenInEnglish ? nil : phrase.english
+        speechBacklog[index].text = phrase.isSpokenInTargetLanguage ? nil : phrase.translatedText
         while let first = speechBacklog.first, first.settled {
             speechBacklog.removeFirst()
-            if let english = first.english {
-                speech?.enqueue(id: first.id, text: english)
+            if let text = first.text {
+                speech?.enqueue(id: first.id, text: text, language: first.language)
             }
         }
     }

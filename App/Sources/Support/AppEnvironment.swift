@@ -11,7 +11,7 @@ import TranslatorCore
 ///   -AudioSamplesDirectory /path/to/tools/samples/out
 ///   -AudioSampleIDs es-name-time,ja-phone
 ///   -AutoStart YES
-///   -SpeaksTranslations YES             speak English aloud (any build)
+///   -SpeaksTranslations YES             speak translations aloud (any build)
 @MainActor
 struct AppEnvironment {
     let keyStore = APIKeyStore()

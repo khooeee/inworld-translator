@@ -1,17 +1,19 @@
 # Inworld Translator
 
-An iPhone app that listens to speech in any language and shows live English
-captions. Nobody picks an input language: Inworld's speech-to-text detects it
-and follows switches mid-conversation, and an LLM on Inworld translates each
-finished phrase into English.
+An iPhone app that translates speech into live captions in a language you
+choose. Inworld's speech-to-text detects the spoken language and follows
+switches mid-conversation. An LLM on Inworld translates each finished phrase.
 
 - Words appear while they are spoken, in italics, and settle when the phrase is final.
-- The English for each phrase appears beneath the original words.
-- Phrases spoken in English are shown as they are, without a translation.
+- **Translate to**, above the connection status, lets you choose any of the
+  30 languages while the app is **Ready**. English is the default. The app
+  remembers your choice and uses it for the next listening session.
+- Each translation appears beneath the original words in the same caption.
+  Speech already in the target language appears once.
 - Recognition covers the
   [30 languages of Inworld STT-1](https://docs.inworld.ai/stt/languages). The
   app lists them under **⋯ → Supported Languages**.
-- Optionally, the phone reads each English translation aloud with Inworld
+- Optionally, the phone reads each translation aloud with Inworld
   TTS. Turn it on with the speaker button next to **Start**.
 
 UIKit built in code, Swift 6 language mode with complete strict concurrency,
@@ -83,11 +85,11 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
                                             ▼
                                   Inworld LLM  gemini-2.5-flash-lite
                                   (fallback gpt-4o-mini)
-                                            │  "<language>\n<English>"
+                                            │  "<source language>\n<translation>"
                                             ▼
                            @MainActor TranslationViewModel ─▶ UITableView
                                             │
-              (speech on) each finished English phrase, in spoken order
+              (speech on) each finished translation, in spoken order
                                             ▼
                                   SpeechQueue ─▶ Inworld TTS  inworld-tts-2-flash
                                             │  streamed 24 kHz PCM
@@ -121,10 +123,11 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
 
 - **Partials.** Interim transcripts revise one provisional phrase in place.
   The final transcript commits it once and sends it for translation.
-- **Context.** Each request carries the three previous phrases for context.
-- **Faithful only.** The phrase is sent as JSON data, never as an
-  instruction. A fixed system prompt with examples tells the model to
-  translate questions and commands, not answer or obey them.
+- **Context.** Each request carries the three previous phrases for context,
+  with any available translations in the selected target language.
+- **Faithful only.** The phrase is sent as JSON data. The system prompt
+  gives the target language and tells the model to translate questions
+  and commands as spoken.
 - **Determinism.** Temperature is 0, and output length is capped relative to
   the input.
 - **Concurrency limit.** At most 2 translations run at once. Up to 6 phrases
@@ -134,12 +137,13 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
 - **Order.** Captions keep spoken order whatever order translations finish
   in. Listening never pauses for translation.
 
-### Spoken English
+### Spoken translations
 
 Off by default; the setting is remembered. When it is on:
 
-- **What is spoken.** The English of each finished phrase. Phrases spoken in
-  English, failed translations and unintelligible phrases are skipped.
+- **What is spoken.** Each finished translation, in its target language.
+  Speech already in the target language, failed translations, and
+  unintelligible phrases are skipped.
 - **Order.** Phrases are spoken in the order they were heard, even when their
   translations finish out of order. One phrase plays at a time.
 - **Taking turns.** Speech waits while someone is mid-sentence and starts at
@@ -148,7 +152,7 @@ Off by default; the setting is remembered. When it is on:
   microphone sends silence instead of what it hears. Otherwise the phone
   would caption its own voice. This is half-duplex, like the conversation
   modes in Apple's and Google's translator apps: anything said over the
-  phone is not heard. The status line reads **Speaking English** meanwhile.
+  phone is not heard. The status line reads **Speaking translation** meanwhile.
 - **Backlog.** At most 2 phrases wait behind the one playing. Past that, the
   oldest waiting phrase is not spoken. Its caption is unaffected.
 - **Stop.** Stop, turning speech off, or a phone call silences speech at once.
@@ -159,8 +163,8 @@ Off by default; the setting is remembered. When it is on:
   so speech comes from the loudspeaker, not the earpiece. Audio streams from
   `/tts/v1/voice:stream` as raw 24 kHz PCM and starts playing with the first
   chunk.
-- **Voice and cost.** Voice "Ashley", model `inworld-tts-2-flash`, billed at
-  about $15 per million characters.
+- **Voice and cost.** Voice "Ashley", model `inworld-tts-2-flash`, with the
+  target language sent explicitly. Billed at about $15 per million characters.
 
 ### Session lifecycle
 
@@ -184,10 +188,11 @@ Off by default; the setting is remembered. When it is on:
   the last words finalize, waits up to 6 s for translations in flight, and
   cancels the rest.
 - **History.** The app keeps up to 2,000 captions on screen. Use
-  **⋯ → Save** to save a JSON file in Files with finalized originals and
-  completed English translations. Use **⋯ → Load** while the app is stopped
-  to reopen a saved file. Loading asks before replacing any captions already
-  on screen.
+  **⋯ → Save** to write finalized originals, completed translations, and
+  their target languages to a JSON file. **⋯ → Load** reopens a saved file
+  while the app is stopped and asks before replacing captions on screen.
+  Older English files still open. New listening sessions use the picker
+  selection and can add captions in a different language.
 
 ## Security
 
@@ -224,9 +229,10 @@ python3 -I tools/samples/make_samples.py     # writes tools/samples/out/*.pcm
 - streaming TTS as NDJSON with base64 PCM. The audio is a quiet tone, about
   60 ms per character of text.
 
-It does not recognize speech. It plays a fixed multilingual script paced by
-the audio it receives. Faults can be injected with `POST /__mock/faults` and
-`POST /__mock/drop`.
+It plays a fixed multilingual script paced by the audio it receives. English
+responses use scripted translations, and other targets use placeholders
+marked with the chosen language code. Faults can be injected with
+`POST /__mock/faults` and `POST /__mock/drop`.
 
 **Samples.** They are rendered with macOS voices. Install missing voices in
 System Settings → Accessibility → Spoken Content.

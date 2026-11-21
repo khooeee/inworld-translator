@@ -6,7 +6,7 @@ import TranslatorCore
 
 /// Captures the microphone with `AVAudioEngine` and delivers 100 ms chunks of
 /// 16 kHz mono PCM16, which is what Inworld STT expects. Also plays spoken
-/// English through the same engine.
+/// translations through the same engine.
 ///
 /// Recovers by itself from route changes (headphones, Bluetooth, unplugging),
 /// and reports interruptions such as phone calls so the session can pause.
@@ -41,7 +41,7 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
         do {
             // Default mode keeps the system's gain control, which helps with
             // speakers at different distances from the phone. Play-and-record
-            // is for spoken English, which goes to the speaker, not the earpiece.
+            // plays spoken translations through the speaker.
             try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
             try session.setPreferredIOBufferDuration(0.02)
             try session.setActive(true)

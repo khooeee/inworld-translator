@@ -82,8 +82,14 @@ export async function startMockInworld({
     return header === `Basic ${apiKey}` || header === `Bearer ${apiKey}`;
   };
 
-  function mockTranslation(phrase) {
+  function mockTranslation(phrase, targetLanguage) {
     const line = translations.get(phrase);
+    if (targetLanguage !== 'en') {
+      const source = line ?? script.find((candidate) => candidate.text.includes(phrase));
+      const language = source?.language ?? 'en';
+      const text = language === targetLanguage ? phrase : `[mock ${targetLanguage}] ${phrase}`;
+      return `${language}\n${text}`;
+    }
     if (line) return `${line.language}\n${line.english}`;
     // A turn cut short (endTurn, closeStream) is a piece of a script line:
     // keep that line's language, and mark the English as not a real translation.
@@ -104,12 +110,17 @@ export async function startMockInworld({
 
     const last = body.messages?.at(-1)?.content ?? '';
     let phrase = last;
+    let targetLanguage = 'en';
     try {
-      phrase = JSON.parse(last).phrase ?? last;
+      const request = JSON.parse(last);
+      phrase = request.phrase ?? last;
+      if (typeof request.targetLanguage === 'string' && /^[a-z]{2,3}$/.test(request.targetLanguage)) {
+        targetLanguage = request.targetLanguage;
+      }
     } catch {
       // Not the translator's JSON envelope; echo the raw message.
     }
-    const reply = mockTranslation(phrase);
+    const reply = mockTranslation(phrase, targetLanguage);
     const usage = {
       prompt_tokens: Math.ceil(JSON.stringify(body.messages ?? []).length / 4),
       completion_tokens: Math.ceil(reply.length / 4),

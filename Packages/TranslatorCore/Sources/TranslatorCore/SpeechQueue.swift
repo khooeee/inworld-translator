@@ -1,7 +1,7 @@
 import Foundation
 import Synchronization
 
-/// Speaks English translations aloud, one at a time, in the order given.
+/// Speaks translations aloud, one at a time, in the order given.
 ///
 /// Speech waits while someone is mid-sentence (the floor is taken), so the
 /// phone does not talk over the conversation it is translating. The queue is
@@ -30,6 +30,7 @@ public final class SpeechQueue: Sendable {
     private struct Item {
         let id: PhraseID
         let text: String
+        let language: TargetLanguage
     }
 
     private struct State {
@@ -55,9 +56,9 @@ public final class SpeechQueue: Sendable {
         continuation.finish()
     }
 
-    public func enqueue(id: PhraseID, text: String) {
+    public func enqueue(id: PhraseID, text: String, language: TargetLanguage = .english) {
         state.withLock { state in
-            state.waiting.append(Item(id: id, text: text))
+            state.waiting.append(Item(id: id, text: text, language: language))
             if state.waiting.count > configuration.maxWaiting {
                 state.waiting.removeFirst(state.waiting.count - configuration.maxWaiting)
             }
@@ -111,7 +112,7 @@ public final class SpeechQueue: Sendable {
 
     private func speak(_ item: Item) async {
         do {
-            try await player.play(synthesizer.synthesize(item.text))
+            try await player.play(synthesizer.synthesize(item.text, language: item.language))
         } catch {
             guard !Task.isCancelled, !(error is CancellationError) else { return }
             continuation.yield(.failed(error as? ServiceError))

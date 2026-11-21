@@ -167,11 +167,11 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
 
     // MARK: SpeechSynthesizing
 
-    public func synthesize(_ text: String) -> AsyncThrowingStream<Data, Error> {
+    public func synthesize(_ text: String, language: TargetLanguage) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await self.runSynthesis(text) { continuation.yield($0) }
+                    try await self.runSynthesis(text, language: language) { continuation.yield($0) }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: Self.normalize(error))
@@ -181,7 +181,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         }
     }
 
-    private func runSynthesis(_ text: String, yield: @Sendable (Data) -> Void) async throws {
+    private func runSynthesis(_ text: String, language: TargetLanguage, yield: @Sendable (Data) -> Void) async throws {
         var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         while text.utf16.count > Self.maxSpeechLength {
             text.removeLast()
@@ -198,6 +198,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
                 text: text,
                 voiceId: configuration.ttsVoice,
                 modelId: configuration.ttsModel,
+                language: language.rawValue,
                 // PCM is headerless; LINEAR16 would put a WAV header on every chunk.
                 audioConfig: .init(audioEncoding: "PCM", sampleRateHertz: SpeechAudio.sampleRate)
             )
@@ -301,6 +302,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         let text: String
         let voiceId: String
         let modelId: String
+        let language: String
         let audioConfig: AudioConfig
     }
 

@@ -1,39 +1,29 @@
+import TranslatorCore
 import UIKit
 
-/// The languages the app can caption: those Inworld STT-1 recognizes.
+/// Shows the Inworld STT-1 language catalog or lets the user choose a target.
 final class SupportedLanguagesViewController: UITableViewController {
-    /// Speech recognition languages of `inworld/inworld-stt-1`, from
-    /// https://docs.inworld.ai/stt/languages (checked November 2026).
-    /// Translation covers far more; recognition is the limit.
-    static let codes = [
-        "ar", "yue", "zh", "cs", "da", "nl", "en", "fil", "fi", "fr",
-        "de", "el", "hi", "hu", "id", "it", "ja", "ko", "mk", "ms",
-        "fa", "pl", "pt", "ro", "ru", "es", "sv", "th", "tr", "vi",
-    ]
-
-    struct Language {
-        let code: String
+    private struct Language {
+        let target: TargetLanguage
         /// In the reader's language, e.g. "Japanese".
         let name: String
         /// In the language itself, e.g. "日本語".
         let nativeName: String
     }
 
-    static func languages(in locale: Locale = .current) -> [Language] {
-        codes
-            .map { code in
-                Language(
-                    code: code,
-                    name: locale.localizedString(forLanguageCode: code) ?? code,
-                    nativeName: Locale(identifier: code).localizedString(forLanguageCode: code) ?? code
-                )
-            }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
+    private let languages = TargetLanguage.allCases
+        .map { language in
+            Language(
+                target: language,
+                name: language.name(),
+                nativeName: language.name(in: Locale(identifier: language.rawValue))
+            )
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    private let selection: (current: TargetLanguage, choose: (TargetLanguage) -> Void)?
 
-    private let languages = SupportedLanguagesViewController.languages()
-
-    init() {
+    init(selection: (current: TargetLanguage, choose: (TargetLanguage) -> Void)? = nil) {
+        self.selection = selection
         super.init(style: .insetGrouped)
     }
 
@@ -44,10 +34,10 @@ final class SupportedLanguagesViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "Supported Languages")
+        title = selection == nil ? String(localized: "Supported Languages") : String(localized: "Translate to")
         navigationItem.largeTitleDisplayMode = .never
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Language")
-        tableView.allowsSelection = false
+        tableView.allowsSelection = selection != nil
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -55,11 +45,13 @@ final class SupportedLanguagesViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        String(localized: "Speak any of these \(languages.count) languages. The app detects which one automatically, follows switches mid-conversation, and shows the English.")
+        guard selection == nil else { return nil }
+        return String(localized: "Speak any of these \(languages.count) languages. The app detects which one automatically and follows switches mid-conversation.")
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        String(localized: "English is shown as spoken, without a translation. Speech recognition is by Inworld STT-1; other languages may come out garbled. Very short phrases are sometimes detected as the wrong language.")
+        guard selection == nil else { return nil }
+        return String(localized: "Speech recognition is by Inworld STT-1. Very short phrases are sometimes detected as the wrong language.")
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -72,13 +64,26 @@ final class SupportedLanguagesViewController: UITableViewController {
             content.secondaryAttributedText = NSAttributedString(
                 string: language.nativeName,
                 attributes: [
-                    .accessibilitySpeechLanguage: language.code,
+                    .accessibilitySpeechLanguage: language.target.rawValue,
                     .font: UIFont.preferredFont(forTextStyle: .subheadline),
                     .foregroundColor: UIColor.secondaryLabel,
                 ]
             )
         }
         cell.contentConfiguration = content
+        let isCurrent = selection?.current == language.target
+        cell.accessoryType = isCurrent ? .checkmark : .none
+        if isCurrent {
+            cell.accessibilityTraits.insert(.selected)
+        } else {
+            cell.accessibilityTraits.remove(.selected)
+        }
         return cell
+    }
+
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        guard let selection else { return }
+        selection.choose(languages[indexPath.row].target)
+        navigationController?.popViewController(animated: true)
     }
 }

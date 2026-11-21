@@ -16,7 +16,7 @@ public struct PhraseID: Hashable, Comparable, Sendable, CustomStringConvertible 
     public var description: String { "#\(rawValue)" }
 }
 
-/// Why a finalized phrase has no English translation.
+/// Why a finalized phrase has no translation.
 public enum TranslationUnavailableReason: String, Codable, Sendable, Equatable {
     /// The request failed, or timed out, after any retry.
     case failed
@@ -54,7 +54,7 @@ public struct PhraseTiming: Codable, Sendable, Equatable {
     }
 }
 
-/// One spoken phrase: the recognized source text and its English translation.
+/// One spoken phrase: the recognized source text and its translation.
 public struct Phrase: Identifiable, Sendable, Equatable {
     public enum SourceState: Sendable, Equatable {
         /// Still being spoken; the text is replaced as recognition improves.
@@ -83,6 +83,7 @@ public struct Phrase: Identifiable, Sendable, Equatable {
     public var translation: Translation
     /// ISO 639 code of the spoken language, known once translation starts.
     public var languageCode: String?
+    public let targetLanguage: TargetLanguage
     public var timing: PhraseTiming
 
     public init(
@@ -91,6 +92,7 @@ public struct Phrase: Identifiable, Sendable, Equatable {
         sourceState: SourceState = .provisional,
         translation: Translation = .none,
         languageCode: String? = nil,
+        targetLanguage: TargetLanguage = .english,
         timing: PhraseTiming
     ) {
         self.id = id
@@ -98,19 +100,28 @@ public struct Phrase: Identifiable, Sendable, Equatable {
         self.sourceState = sourceState
         self.translation = translation
         self.languageCode = languageCode
+        self.targetLanguage = targetLanguage
         self.timing = timing
     }
 
-    /// The finished English text, if there is one.
-    public var english: String? {
+    /// The finished translation, if there is one.
+    public var translatedText: String? {
         if case .completed(let text) = translation { return text }
         return nil
     }
 
-    /// True when the phrase was spoken in English, so the translation only
-    /// repeats the source.
+    /// The finished translation for consumers that expect English.
+    public var english: String? {
+        targetLanguage == .english ? translatedText : nil
+    }
+
     public var isSpokenInEnglish: Bool {
-        languageCode == "en"
+        TargetLanguage.english.matches(languageCode)
+    }
+
+    /// True when the translation would repeat the source.
+    public var isSpokenInTargetLanguage: Bool {
+        targetLanguage.matches(languageCode)
     }
 
     /// True once neither the source nor the translation can change again.
@@ -161,7 +172,7 @@ public enum SessionNotice: Sendable, Equatable {
     case stoppedByInterruption
     /// Translations are being refused by a usage limit; listening continues.
     case translationLimited
-    /// English could not be spoken aloud; captions continue.
+    /// The translation could not be spoken aloud; captions continue.
     case speechUnavailable
 }
 
@@ -174,7 +185,7 @@ public enum SessionEvent: Sendable, Equatable {
     /// Microphone level, 0 through 1.
     case level(Float)
     case notice(SessionNotice)
-    /// This phrase's English is being spoken aloud; nil once nothing is.
+    /// This phrase's translation is being spoken aloud; nil once nothing is.
     /// Listening is paused meanwhile, so the phone does not hear itself.
     case speaking(PhraseID?)
 }

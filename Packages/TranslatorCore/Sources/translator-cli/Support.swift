@@ -64,8 +64,8 @@ final class MeteredSynthesizer: SpeechSynthesizing {
         totals.withLock { $0 }
     }
 
-    func synthesize(_ text: String) -> AsyncThrowingStream<Data, Error> {
-        let upstream = inner.synthesize(text)
+    func synthesize(_ text: String, language: TargetLanguage) -> AsyncThrowingStream<Data, Error> {
+        let upstream = inner.synthesize(text, language: language)
         let requestedAt = Date()
         totals.withLock {
             $0.requests += 1

@@ -44,11 +44,11 @@ public actor TranslationPipeline {
     private struct Job {
         let id: PhraseID
         let text: String
+        let targetLanguage: TargetLanguage
     }
 
     private struct HistoryEntry {
-        let id: PhraseID
-        let source: String
+        let job: Job
         var translation: String?
     }
 
@@ -72,14 +72,15 @@ public actor TranslationPipeline {
     }
 
     /// Queues a finalized phrase for translation.
-    public func submit(id: PhraseID, text: String) {
-        history.append(HistoryEntry(id: id, source: text, translation: nil))
+    public func submit(id: PhraseID, text: String, targetLanguage: TargetLanguage = .english) {
+        let job = Job(id: id, text: text, targetLanguage: targetLanguage)
+        history.append(HistoryEntry(job: job, translation: nil))
         let historyLimit = configuration.contextSize + configuration.maxConcurrent + configuration.maxWaiting + 1
         if history.count > historyLimit {
             history.removeFirst(history.count - historyLimit)
         }
 
-        waiting.append(Job(id: id, text: text))
+        waiting.append(job)
         while waiting.count > configuration.maxWaiting {
             let dropped = waiting.removeFirst()
             emit(dropped.id, .unavailable(.skipped, error: nil))
@@ -119,7 +120,7 @@ public actor TranslationPipeline {
     private func startWaitingJobs() {
         while running.count < configuration.maxConcurrent, !waiting.isEmpty {
             let job = waiting.removeFirst()
-            let request = TranslationRequest(text: job.text, context: context(before: job.id))
+            let request = TranslationRequest(text: job.text, context: context(before: job), targetLanguage: job.targetLanguage)
             running[job.id] = Task { [translator, configuration, continuation] in
                 let outcome = await Self.run(request, translator: translator, configuration: configuration) { kind in
                     continuation.yield(Update(id: job.id, kind: kind))
@@ -132,7 +133,7 @@ public actor TranslationPipeline {
     private func finish(_ id: PhraseID, outcome: Update.Kind) {
         running[id] = nil
         if case .completed(let translation, _) = outcome,
-           let index = history.firstIndex(where: { $0.id == id }) {
+           let index = history.firstIndex(where: { $0.job.id == id }) {
             history[index].translation = translation
         }
         emit(id, outcome)
@@ -152,13 +153,17 @@ public actor TranslationPipeline {
         continuation.yield(Update(id: id, kind: kind))
     }
 
-    /// The phrases just before `id`, oldest first, with their translations
-    /// where those have already arrived.
-    private func context(before id: PhraseID) -> [TranslationContextItem] {
+    /// Earlier phrases, with any translations in the request's target language.
+    private func context(before job: Job) -> [TranslationContextItem] {
         history
-            .filter { $0.id < id }
+            .filter { $0.job.id < job.id }
             .suffix(configuration.contextSize)
-            .map { TranslationContextItem(source: $0.source, translation: $0.translation) }
+            .map { entry in
+                TranslationContextItem(
+                    source: entry.job.text,
+                    translation: entry.job.targetLanguage == job.targetLanguage ? entry.translation : nil
+                )
+            }
     }
 
     // MARK: One translation

@@ -24,6 +24,7 @@ final class TranslationViewModel {
     /// Older phrases are dropped past this, so a long session stays bounded.
     nonisolated static let maxPhrases = 2000
     static let speaksTranslationsKey = "SpeaksTranslations"
+    static let targetLanguageKey = "TargetLanguage"
 
     var onPhrasesChanged: ((PhraseChanges) -> Void)?
     var onStatusChanged: ((SessionStatus) -> Void)?
@@ -33,14 +34,16 @@ final class TranslationViewModel {
     var onTranslationCompleted: ((Phrase) -> Void)?
     var onSpeakingChanged: ((PhraseID?) -> Void)?
     var onSpeaksTranslationsChanged: ((Bool) -> Void)?
+    var onTargetLanguageChanged: (() -> Void)?
 
     private(set) var phrases: [Phrase] = []
     private(set) var status: SessionStatus = .idle
     private(set) var notice: Notice?
-    /// The phrase whose English is being spoken aloud.
+    /// The phrase whose translation is being spoken aloud.
     private(set) var speaking: PhraseID?
-    /// Whether English is spoken aloud. Remembered between launches.
+    /// Whether translations are spoken aloud. Remembered between launches.
     private(set) var speaksTranslations: Bool
+    private(set) var targetLanguage: TargetLanguage
 
     private let session: any TranslationSessionControlling
     private let defaults: UserDefaults
@@ -53,6 +56,7 @@ final class TranslationViewModel {
         self.defaults = defaults
         self.hasAPIKey = hasAPIKey
         speaksTranslations = defaults.bool(forKey: Self.speaksTranslationsKey)
+        targetLanguage = defaults.string(forKey: Self.targetLanguageKey).flatMap(TargetLanguage.init(rawValue:)) ?? .english
         events = Task { [weak self, events = session.events] in
             for await event in events {
                 self?.apply(event)
@@ -68,6 +72,7 @@ final class TranslationViewModel {
     }
 
     var isRunning: Bool { status.isRunning }
+    var canChangeTargetLanguage: Bool { status == .idle }
 
     func phrase(for id: PhraseID) -> Phrase? {
         positions[id].map { phrases[$0] }
@@ -84,12 +89,15 @@ final class TranslationViewModel {
     }
 
     func start() {
+        guard !isRunning else { return }
         guard hasAPIKey() else {
             show(Notice(message: String(localized: "Add your Inworld API key to start translating."), action: .openAPIKeySettings))
             return
         }
         show(nil)
-        Task { await session.start() }
+        let targetLanguage = self.targetLanguage
+        apply(.status(.starting))
+        Task { await session.start(targetLanguage: targetLanguage) }
     }
 
     func stop(notice: SessionNotice? = nil) {
@@ -106,6 +114,13 @@ final class TranslationViewModel {
         defaults.set(enabled, forKey: Self.speaksTranslationsKey)
         onSpeaksTranslationsChanged?(enabled)
         Task { [session] in await session.setSpeaksTranslations(enabled) }
+    }
+
+    func setTargetLanguage(_ language: TargetLanguage) {
+        guard canChangeTargetLanguage, targetLanguage != language else { return }
+        targetLanguage = language
+        defaults.set(language.rawValue, forKey: Self.targetLanguageKey)
+        onTargetLanguageChanged?()
     }
 
     /// A notice asking for a key is out of date once the key changes.
@@ -147,8 +162,8 @@ final class TranslationViewModel {
     }
 
     static func text(for phrase: Phrase) -> String {
-        guard let english = phrase.english, !phrase.isSpokenInEnglish else { return phrase.sourceText }
-        return "\(phrase.sourceText)\n\(english)"
+        guard let translation = phrase.translatedText, !phrase.isSpokenInTargetLanguage else { return phrase.sourceText }
+        return "\(phrase.sourceText)\n\(translation)"
     }
 
     // MARK: Events
@@ -156,6 +171,7 @@ final class TranslationViewModel {
     func apply(_ event: SessionEvent) {
         switch event {
         case .status(let newStatus):
+            guard status != newStatus else { return }
             status = newStatus
             onStatusChanged?(newStatus)
         case .level(let level):
@@ -184,10 +200,10 @@ final class TranslationViewModel {
 
     private func upsert(_ phrase: Phrase) {
         if let index = positions[phrase.id] {
-            let wasCompleted = phrases[index].english != nil
+            let wasCompleted = phrases[index].translatedText != nil
             phrases[index] = phrase
             onPhrasesChanged?(PhraseChanges(updated: [phrase.id]))
-            if !wasCompleted, phrase.english != nil {
+            if !wasCompleted, phrase.translatedText != nil {
                 onTranslationCompleted?(phrase)
             }
             return
@@ -246,7 +262,7 @@ final class TranslationViewModel {
         case .translationLimited:
             Notice(message: String(localized: "Inworld is limiting translations. Some phrases won't be translated."), action: nil)
         case .speechUnavailable:
-            Notice(message: String(localized: "Couldn't speak the English aloud. Captions will continue."), action: nil)
+            Notice(message: String(localized: "Couldn't read the translation aloud. Captions will continue."), action: nil)
         }
     }
 }

@@ -1,8 +1,7 @@
 import TranslatorCore
 import UIKit
 
-/// One phrase: a small header with the language, the original words, and the
-/// English translation beneath them.
+/// One phrase with language labels, the original words, and their translation.
 final class PhraseCell: UITableViewCell {
     static let reuseIdentifier = "PhraseCell"
 
@@ -20,6 +19,7 @@ final class PhraseCell: UITableViewCell {
         for label in [headerLabel, sourceLabel, translationLabel] {
             label.numberOfLines = 0
             label.adjustsFontForContentSizeCategory = true
+            label.textAlignment = .natural
         }
         headerLabel.font = .preferredFont(forTextStyle: .caption1)
         headerLabel.textColor = .secondaryLabel
@@ -46,15 +46,16 @@ final class PhraseCell: UITableViewCell {
     }
 
     func configure(with phrase: Phrase, isSpeaking: Bool = false) {
-        let spokenInEnglish = phrase.isSpokenInEnglish
+        let spokenInTargetLanguage = phrase.isSpokenInTargetLanguage
+        let targetName = phrase.targetLanguage.name()
 
-        // Header: language, and whether the phrase is still being heard or
-        // is being read aloud.
         var header: [String] = []
         if phrase.sourceState == .provisional {
             header.append(String(localized: "Listening…"))
-        } else if let language = Self.languageName(phrase.languageCode) {
-            header.append(language)
+        } else if let sourceName = Self.languageName(phrase.languageCode) {
+            header.append(spokenInTargetLanguage ? sourceName : String(localized: "\(sourceName) → \(targetName)"))
+        } else {
+            header.append(String(localized: "To \(targetName)"))
         }
         if phrase.sourceState == .interrupted {
             header.append(String(localized: "cut off"))
@@ -65,38 +66,34 @@ final class PhraseCell: UITableViewCell {
         headerLabel.text = header.joined(separator: " · ")
         headerLabel.isHidden = header.isEmpty
 
-        // Source: italic and faint while the recognizer may still revise it.
-        // English speech is shown as the caption itself, at full strength.
+        // The source appears at full strength when it is the caption itself.
         sourceLabel.text = phrase.sourceText
         switch phrase.sourceState {
         case .provisional:
             sourceLabel.font = Self.font(.body, italic: true)
             sourceLabel.textColor = .tertiaryLabel
         case .final, .interrupted:
-            sourceLabel.font = Self.font(spokenInEnglish ? .title3 : .body, weight: spokenInEnglish ? .semibold : .regular)
-            sourceLabel.textColor = spokenInEnglish ? .label : .secondaryLabel
+            sourceLabel.font = Self.font(spokenInTargetLanguage ? .title3 : .body, weight: spokenInTargetLanguage ? .semibold : .regular)
+            sourceLabel.textColor = spokenInTargetLanguage ? .label : .secondaryLabel
         }
 
         // Translation.
         translationLabel.font = Self.font(.title3, weight: .semibold)
+        translationLabel.isHidden = spokenInTargetLanguage
         switch phrase.translation {
         case .none:
             translationLabel.isHidden = true
         case .pending:
-            translationLabel.isHidden = spokenInEnglish
             translationLabel.text = String(localized: "Translating…")
             translationLabel.font = Self.font(.body, italic: true)
             translationLabel.textColor = .tertiaryLabel
         case .partial(let text):
-            translationLabel.isHidden = spokenInEnglish
             translationLabel.text = text
             translationLabel.textColor = .secondaryLabel
         case .completed(let text):
-            translationLabel.isHidden = spokenInEnglish
             translationLabel.text = text
             translationLabel.textColor = .label
         case .unavailable(let reason):
-            translationLabel.isHidden = false
             translationLabel.text = Self.describe(reason)
             translationLabel.font = Self.font(.subheadline, italic: true)
             translationLabel.textColor = .secondaryLabel
@@ -106,33 +103,40 @@ final class PhraseCell: UITableViewCell {
     }
 
     private func updateAccessibility(for phrase: Phrase) {
-        let language = Self.languageName(phrase.languageCode)
-        var parts: [String] = []
-        if let language, !phrase.isSpokenInEnglish {
-            parts.append(String(localized: "\(language): \(phrase.sourceText)"))
-        } else {
-            parts.append(phrase.sourceText)
+        let label = NSMutableAttributedString()
+        func append(_ text: String, language: String? = nil) {
+            if label.length > 0 {
+                label.append(NSAttributedString(string: ". "))
+            }
+            let attributes: [NSAttributedString.Key: Any] = language.map { [.accessibilitySpeechLanguage: $0] } ?? [:]
+            label.append(NSAttributedString(string: text, attributes: attributes))
         }
+        if let language = Self.languageName(phrase.languageCode), !phrase.isSpokenInTargetLanguage {
+            append(language)
+        }
+        append(phrase.sourceText, language: phrase.languageCode == "und" ? nil : phrase.languageCode)
         if !translationLabel.isHidden, let translation = translationLabel.text {
             switch phrase.translation {
             case .partial, .completed:
-                parts.append(String(localized: "English: \(translation)"))
+                append(phrase.targetLanguage.name())
+                append(translation, language: phrase.targetLanguage.rawValue)
             default:
-                parts.append(translation)
+                append(translation)
             }
         }
-        accessibilityLabel = parts.joined(separator: ". ")
+        accessibilityAttributedLabel = label
 
         switch (phrase.sourceState, phrase.translation) {
         case (.provisional, _): accessibilityValue = String(localized: "Still listening")
-        case (_, .pending), (_, .partial): accessibilityValue = String(localized: "Translating")
+        case (_, .pending), (_, .partial):
+            accessibilityValue = phrase.isSpokenInTargetLanguage ? nil : String(localized: "Translating")
         default: accessibilityValue = nil
         }
 
         var actions: [UIAccessibilityCustomAction] = []
-        if let english = phrase.english, !phrase.isSpokenInEnglish {
-            actions.append(UIAccessibilityCustomAction(name: String(localized: "Copy English")) { [weak self] _ in
-                self?.onCopy?(english)
+        if let translation = phrase.translatedText, !phrase.isSpokenInTargetLanguage {
+            actions.append(UIAccessibilityCustomAction(name: String(localized: "Copy Translation")) { [weak self] _ in
+                self?.onCopy?(translation)
                 return true
             })
         }
