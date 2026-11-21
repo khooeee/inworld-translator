@@ -556,18 +556,19 @@ extension TranslationViewController: UITableViewDelegate {
 
     func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
         guard let id = dataSource.itemIdentifier(for: indexPath), let phrase = viewModel.phrase(for: id) else { return nil }
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            var actions: [UIAction] = []
+        let configuration = UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            var actions = [
+                UIAction(title: String(localized: "Copy Original"), image: UIImage(systemName: "text.quote")) { _ in self?.copy(phrase.sourceText) },
+            ]
             if let translation = phrase.translatedText, !phrase.isSpokenInTargetLanguage {
                 actions.append(UIAction(title: String(localized: "Copy Translation"), image: UIImage(systemName: "doc.on.doc")) { _ in self?.copy(translation) })
-            }
-            actions.append(UIAction(title: String(localized: "Copy Original"), image: UIImage(systemName: "text.quote")) { _ in self?.copy(phrase.sourceText) })
-            if phrase.translatedText != nil, !phrase.isSpokenInTargetLanguage {
                 actions.append(UIAction(title: String(localized: "Copy Both"), image: UIImage(systemName: "doc.on.clipboard")) { _ in
                     self?.copy(TranslationViewModel.text(for: phrase))
                 })
             }
             return UIMenu(children: actions)
         }
+        configuration.preferredMenuElementOrder = .fixed
+        return configuration
     }
 }
