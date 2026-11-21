@@ -131,6 +131,9 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
 
 - **Partials.** Interim transcripts revise one provisional phrase in place.
   The final transcript commits it once and sends it for translation.
+- **Long stretches of speech.** When a phrase stays open for 8 seconds,
+  the app asks Inworld to finalize it so translation can start while the
+  speaker continues.
 - **Context.** One-way translation uses the previous three phrases and any
   available translations in the current target language. Two-way mode
   reads each phrase independently and sends a fixed direction to Inworld

@@ -37,7 +37,7 @@ public actor TranslationSession: TranslationSessionControlling {
         public var idleTimeout: Duration? = .seconds(180)
         /// Ask the service to finalize a turn that has run this long, so
         /// someone speaking without pauses still gets translated.
-        public var maxTurnDuration: Duration? = .seconds(15)
+        public var maxTurnDuration: Duration? = .seconds(8)
         /// How long Stop waits for the service to finalize the last turn.
         public var finishTimeout: Duration = .seconds(2)
         /// How long Stop waits for translations already under way.
