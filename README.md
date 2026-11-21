@@ -24,13 +24,6 @@ switches mid-conversation. An LLM on Inworld translates each finished phrase.
 - Optionally, the phone reads each translation aloud with Inworld
   TTS. Turn it on with the speaker button next to **Start**.
 
-UIKit built in code, Swift 6 language mode with complete strict concurrency,
-iOS 18 or later.
-
-> **Personal use only.** The app calls Inworld directly with your API key,
-> which is kept in the iPhone's Keychain. See [Security](#security) before
-> sharing a build with anyone.
-
 ## Setup
 
 Requirements:
@@ -212,22 +205,6 @@ Off by default; the setting is remembered. When it is on:
   while the app is stopped and asks before replacing captions on screen.
   Older English files still open. New listening sessions use the picker
   selection and can add captions in a different language.
-
-## Security
-
-This build is meant for your own phone:
-
-- The key is stored in the Keychain as
-  `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. It never syncs through
-  iCloud Keychain and never moves to another device in a restore.
-- The key is sent only to `api.inworld.ai`, as `Authorization: Basic <key>`.
-- Anyone with your unlocked phone and debugging tools could extract the key.
-  Don't share builds with your key in them.
-- If a key leaks, delete it in the Portal and make a new one.
-
-Before giving the app to other people, put a small backend between the app and
-Inworld. The backend would hold the key and hand out short-lived tokens, so
-the key never ships in the app.
 
 ## Simulator and CLI
 
