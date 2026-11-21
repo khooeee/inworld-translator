@@ -181,7 +181,7 @@ final class TranslationViewController: UIViewController {
         jump.title = String(localized: "Jump to Latest")
         jump.image = UIImage(systemName: "arrow.down")
         jump.imagePadding = 8
-        jump.baseBackgroundColor = .secondarySystemFill
+        jump.baseBackgroundColor = .secondarySystemBackground
         jump.baseForegroundColor = .label
         jumpButton.configuration = jump
         jumpButton.isHidden = true
