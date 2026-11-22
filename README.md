@@ -171,7 +171,9 @@ Off by default; the setting is remembered. When it is on:
   so speech uses the loudspeaker when there's no headset route. Audio
   streams from `/tts/v1/voice:stream` as raw 24 kHz PCM and starts playing
   with the first chunk.
-- **Voice and cost.** Voice "Ashley", model `inworld-tts-2-flash`, with the
+- **Voice and cost.** **⋯ → Voice** opens the Inworld voice catalog. The app
+  remembers your selection and defaults to Ashley. You can preview voices
+  while listening is stopped. Synthesis uses `inworld-tts-2-flash` with the
   target language sent explicitly. Billed at about $15 per million characters.
 
 ### Session lifecycle

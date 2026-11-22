@@ -8,6 +8,8 @@ import Foundation
 /// in Settings takes effect on the next connection or request.
 public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizing {
     public struct Configuration: Sendable, Equatable {
+        public static let defaultTTSVoice = "Ashley"
+
         public var baseURL: URL
         public var sttModel: String
         public var translationModel: String
@@ -22,7 +24,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
             translationModel: String = "google-ai-studio/gemini-2.5-flash-lite",
             translationFallbackModels: [String] = ["openai/gpt-4o-mini"],
             ttsModel: String = "inworld-tts-2-flash",
-            ttsVoice: String = "Ashley"
+            ttsVoice: String = Self.defaultTTSVoice
         ) {
             self.baseURL = baseURL
             self.sttModel = sttModel
@@ -50,19 +52,31 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         }
     }
 
+    public struct Voice: Decodable, Identifiable, Sendable {
+        private let voiceId: String
+        private let displayName: String?
+        public let languageCode: String?
+
+        public var id: String { voiceId }
+        public var name: String { displayName.flatMap { $0.isEmpty ? nil : $0 } ?? voiceId }
+    }
+
     /// The longest text one streaming TTS request accepts, in UTF-16 units.
     static let maxSpeechLength = 4000
 
     private let configuration: Configuration
+    private let selectedVoiceID: @Sendable () async -> String?
     private let apiKey: @Sendable () async -> String?
     private let session: URLSession
 
     public init(
         configuration: Configuration = Configuration(),
         session: URLSession? = nil,
+        selectedVoiceID: @escaping @Sendable () async -> String? = { nil },
         apiKey: @escaping @Sendable () async -> String?
     ) {
         self.configuration = configuration
+        self.selectedVoiceID = selectedVoiceID
         self.apiKey = apiKey
         if let session {
             self.session = session
@@ -165,6 +179,57 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         throw ServiceError.invalidResponse
     }
 
+    // MARK: Voices
+
+    public func listVoices() async throws -> [Voice] {
+        var voices: [Voice.ID: Voice] = [:]
+        var nextPage: String?
+        var seenPageTokens: Set<String> = []
+        let authorization = try await authorization()
+        repeat {
+            try Task.checkCancellation()
+            var query = [URLQueryItem(name: "pageSize", value: "100")]
+            if let nextPage { query.append(URLQueryItem(name: "pageToken", value: nextPage)) }
+            let data = try await voiceData(path: "/voices/v1/voices", query: query, authorization: authorization)
+            let page = try JSONDecoder().decode(VoicePage.self, from: data)
+            for voice in page.voices ?? [] { voices[voice.id] = voice }
+            nextPage = page.nextPageToken.flatMap { $0.isEmpty ? nil : $0 }
+            if let nextPage, !seenPageTokens.insert(nextPage).inserted { throw ServiceError.invalidResponse }
+        } while nextPage != nil
+        return voices.values.sorted {
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+    }
+
+    public func voicePreview(id: Voice.ID) async throws -> Data {
+        let authorization = try await authorization()
+        let data = try await voiceData(path: "/tts/v1/voice:preview", query: [
+            URLQueryItem(name: "voice_id", value: id),
+            URLQueryItem(name: "model_id", value: configuration.ttsModel),
+        ], authorization: authorization)
+        let preview = try JSONDecoder().decode(VoicePreview.self, from: data)
+        guard !preview.audioContent.isEmpty else { throw ServiceError.invalidResponse }
+        return preview.audioContent
+    }
+
+    private func voiceData(path: String, query: [URLQueryItem], authorization: String) async throws -> Data {
+        guard var components = URLComponents(url: configuration.baseURL, resolvingAgainstBaseURL: false) else {
+            throw ServiceError.invalidResponse
+        }
+        components.path = components.path.trimmingSuffix("/") + path
+        components.queryItems = query
+        // Preserve plus signs in opaque page tokens for form-style query decoders.
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        guard let url = components.url else { throw ServiceError.invalidResponse }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw ServiceError.invalidResponse }
+        guard http.statusCode == 200 else { throw Self.error(for: http) }
+        return data
+    }
+
     // MARK: SpeechSynthesizing
 
     public func synthesize(_ text: String, language: TargetLanguage) -> AsyncThrowingStream<Data, Error> {
@@ -188,6 +253,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         }
         guard !text.isEmpty else { return }
 
+        let voiceID = await selectedVoiceID() ?? configuration.ttsVoice
         var request = URLRequest(url: configuration.ttsStreamURL)
         request.httpMethod = "POST"
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -196,7 +262,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         request.httpBody = try JSONEncoder().encode(
             SpeechRequest(
                 text: text,
-                voiceId: configuration.ttsVoice,
+                voiceId: voiceID,
                 modelId: configuration.ttsModel,
                 language: language.rawValue,
                 // PCM is headerless; LINEAR16 would put a WAV header on every chunk.
@@ -249,6 +315,15 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
     }
 
     // MARK: Wire types
+
+    private struct VoicePage: Decodable {
+        let voices: [Voice]?
+        let nextPageToken: String?
+    }
+
+    private struct VoicePreview: Decodable {
+        let audioContent: Data
+    }
 
     private struct ChatRequest: Encodable {
         let model: String

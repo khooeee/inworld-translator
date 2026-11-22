@@ -24,6 +24,11 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 environment.viewModel.apiKeyChanged()
             }
             navigation?.present(UINavigationController(rootViewController: keyScreen), animated: true)
+        } openVoiceSettings: { [weak navigation] in
+            let picker = VoicePickerViewController(client: environment.client, preference: environment.speechVoice) {
+                environment.viewModel.status == .idle
+            }
+            navigation?.pushViewController(picker, animated: true)
         }
         navigation.viewControllers = [translation]
         navigation.navigationBar.prefersLargeTitles = false

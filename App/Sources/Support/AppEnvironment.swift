@@ -16,6 +16,8 @@ import TranslatorCore
 struct AppEnvironment {
     let keyStore = APIKeyStore()
     let baseURL: URL
+    let client: InworldClient
+    let speechVoice: SpeechVoicePreference
     let viewModel: TranslationViewModel
     let autoStart: Bool
 
@@ -33,7 +35,9 @@ struct AppEnvironment {
         let keyOverride = overrides.string(forKey: "InworldAPIKey")
         let apiKey: @Sendable () async -> String? = { keyOverride ?? keyStore.load() }
 
-        let client = InworldClient(configuration: .init(baseURL: baseURL), apiKey: apiKey)
+        let speechVoice = SpeechVoicePreference(defaults: defaults)
+        self.speechVoice = speechVoice
+        client = InworldClient(configuration: .init(baseURL: baseURL), selectedVoiceID: { await speechVoice.id }, apiKey: apiKey)
         let audio: any AudioCapturing & SpeechPlaying = Self.sampleAudio(overrides) ?? MicrophoneCapture()
         let session = TranslationSession(
             audio: audio,
@@ -62,5 +66,19 @@ struct AppEnvironment {
         #else
         return nil
         #endif
+    }
+}
+
+@MainActor
+struct SpeechVoicePreference {
+    let defaults: UserDefaults
+    private static let key = "SpokenTranslationVoiceID"
+
+    var id: InworldClient.Voice.ID {
+        defaults.string(forKey: Self.key) ?? InworldClient.Configuration.defaultTTSVoice
+    }
+
+    func select(_ id: InworldClient.Voice.ID) {
+        defaults.set(id, forKey: Self.key)
     }
 }
