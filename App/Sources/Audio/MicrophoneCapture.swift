@@ -16,22 +16,26 @@ import TranslatorCore
 actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     private static let log = Logger(subsystem: "InworldTranslator", category: "audio")
 
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+    private struct CaptureGraph {
+        let id = UUID()
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+    }
+
     private let speechFormat = AVAudioFormat(standardFormatWithSampleRate: Double(SpeechAudio.sampleRate), channels: 1)!
     private let gate = SpeechGate()
+    private var graph: CaptureGraph?
     private var playback: PlaybackTracker?
     private var converter: PCMConverter?
     private var chunks: AsyncStream<AudioChunk>.Continuation?
     private var events: AsyncStream<AudioCaptureEvent>.Continuation?
     private var observers: [any NSObjectProtocol] = []
-    private var isRunning = false
     private var isInterrupted = false
 
     // MARK: AudioCapturing
 
     func start() async throws -> AudioCaptureStream {
-        await stop()
+        stop()
         guard await Self.requestPermission() else { throw AudioCaptureError.permissionDenied }
 
         let session = AVAudioSession.sharedInstance()
@@ -47,6 +51,11 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
             throw AudioCaptureError.unavailable
         }
 
+        // A voice preview uses a playback-only session. Create the engine
+        // after recording is active so its input node sees the recording route.
+        let graph = CaptureGraph()
+        self.graph = graph
+
         // Five seconds of audio at most. If the network falls that far
         // behind, the oldest audio goes first.
         let (chunkStream, chunkContinuation) = AsyncStream<AudioChunk>.makeStream(bufferingPolicy: .bufferingNewest(50))
@@ -55,32 +64,31 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
         events = eventContinuation
 
         do {
-            try startEngine()
+            try startEngine(graph)
         } catch {
             Self.log.error("Audio engine failed to start: \(error.localizedDescription, privacy: .public)")
-            await stop()
+            stop()
             throw AudioCaptureError.unavailable
         }
-        isRunning = true
-        observeSystemEvents()
+        observeSystemEvents(for: graph)
         return AudioCaptureStream(chunks: chunkStream, events: eventStream)
     }
 
-    func stop() async {
+    func stop() {
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
         }
         observers.removeAll()
         cutPlayback()
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        converter = nil
-        gate.reset()
-        if isRunning {
+        if let graph {
+            graph.engine.inputNode.removeTap(onBus: 0)
+            graph.engine.stop()
+            self.graph = nil
             // Let other apps' audio resume now that the microphone is free.
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
-        isRunning = false
+        converter = nil
+        gate.reset()
         isInterrupted = false
         chunks?.finish()
         events?.finish()
@@ -90,7 +98,8 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
 
     // MARK: Engine
 
-    private func startEngine() throws {
+    private func startEngine(_ graph: CaptureGraph) throws {
+        let (engine, player) = (graph.engine, graph.player)
         gate.updateRoute(allowsListening: Self.currentOutputAllowsListening())
         let input = engine.inputNode
         input.removeTap(onBus: 0)
@@ -115,13 +124,13 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     }
 
     /// Rebuilds the tap for a new input format and restarts.
-    private func restartEngine(reason: String) {
-        guard isRunning, !isInterrupted else { return }
-        Self.log.info("Restarting audio engine: \(reason, privacy: .public)")
+    private func restartEngine(captureID: UUID) {
+        guard let graph, graph.id == captureID, !isInterrupted else { return }
+        Self.log.info("Restarting audio engine after a configuration change")
         cutPlayback()
-        engine.stop()
+        graph.engine.stop()
         do {
-            try startEngine()
+            try startEngine(graph)
         } catch {
             Self.log.error("Audio engine restart failed: \(error.localizedDescription, privacy: .public)")
             events?.yield(.failed)
@@ -148,21 +157,22 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
         }
     }
 
-    private func observeSystemEvents() {
+    private func observeSystemEvents(for graph: CaptureGraph) {
         let center = NotificationCenter.default
         let session = AVAudioSession.sharedInstance()
+        let captureID = graph.id
 
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: session, queue: nil) { [weak self] note in
             let info = note.userInfo ?? [:]
             let type = (info[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init)
             let options = (info[AVAudioSessionInterruptionOptionKey] as? UInt).map(AVAudioSession.InterruptionOptions.init) ?? []
-            Task { await self?.interruption(type, shouldResume: options.contains(.shouldResume)) }
+            Task { await self?.interruption(type, shouldResume: options.contains(.shouldResume), captureID: captureID) }
         })
 
         // Headphones, Bluetooth, and other route changes can change the input
         // format. The engine stops itself and posts this notification.
-        observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
-            Task { await self?.restartEngine(reason: "configuration change") }
+        observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: graph.engine, queue: nil) { [weak self] _ in
+            Task { await self?.restartEngine(captureID: captureID) }
         })
 
         observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: nil) { [gate] note in
@@ -174,17 +184,17 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
 
         // The audio server restarted; every audio object is now invalid.
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: session, queue: nil) { [weak self] _ in
-            Task { await self?.mediaServicesReset() }
+            Task { await self?.mediaServicesReset(captureID: captureID) }
         })
     }
 
-    private func interruption(_ type: AVAudioSession.InterruptionType?, shouldResume: Bool) {
-        guard isRunning else { return }
+    private func interruption(_ type: AVAudioSession.InterruptionType?, shouldResume: Bool, captureID: UUID) {
+        guard let graph, graph.id == captureID else { return }
         switch type {
         case .began:
             isInterrupted = true
             cutPlayback()
-            engine.stop()
+            graph.engine.stop()
             events?.yield(.interruptionBegan)
         case .ended:
             guard isInterrupted else { return }
@@ -195,7 +205,7 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
             }
             do {
                 try AVAudioSession.sharedInstance().setActive(true)
-                try startEngine()
+                try startEngine(graph)
                 events?.yield(.interruptionEnded(resumed: true))
             } catch {
                 Self.log.error("Could not resume after interruption: \(error.localizedDescription, privacy: .public)")
@@ -206,15 +216,16 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
         }
     }
 
-    private func mediaServicesReset() {
-        guard isRunning else { return }
+    private func mediaServicesReset(captureID: UUID) {
+        guard graph?.id == captureID else { return }
         events?.yield(.failed)
     }
 
     // MARK: SpeechPlaying
 
     func play(_ audio: AsyncThrowingStream<Data, any Error>) async throws {
-        guard isRunning, !isInterrupted, engine.isRunning else { throw AudioCaptureError.unavailable }
+        guard let graph, !isInterrupted, graph.engine.isRunning else { throw AudioCaptureError.unavailable }
+        let (engine, player) = (graph.engine, graph.player)
         if playback != nil { cutPlayback() }
         let tracker = PlaybackTracker()
         playback = tracker
@@ -257,7 +268,7 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     private func cutPlayback() {
         playback?.cancel()
         playback = nil
-        player.stop()
+        graph?.player.stop()
         gate.stopPlayback()
     }
 
