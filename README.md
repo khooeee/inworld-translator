@@ -1,4 +1,4 @@
-# Inworld Translator
+# Translator
 
 An iPhone app that translates speech into live captions in a language you
 choose. Inworld's speech-to-text detects the spoken language and follows
@@ -52,10 +52,10 @@ Steps:
 
    ```sh
    xcodegen generate
-   open InworldTranslator.xcodeproj
+   open Translator.xcodeproj
    ```
 
-3. Run the **InworldTranslator** scheme on your iPhone.
+3. Run the **Translator** scheme on your iPhone.
 
 4. In the app, open **⋯ → Inworld API Key** and paste the Base64 key from the Portal.
    Then tap **Check and Save**.
@@ -241,7 +241,7 @@ Debug builds accept launch arguments that replace the microphone with sample
 files and point the app at the mock:
 
 ```sh
-xcrun simctl launch booted com.example.InworldTranslator \
+xcrun simctl launch booted com.example.Translator \
   -InworldBaseURL http://127.0.0.1:8788 -InworldAPIKey mock-api-key \
   -AudioSamplesDirectory "$PWD/tools/samples/out" \
   -AudioSampleIDs es-name-time,ja-phone,fr-injection -AutoStart YES

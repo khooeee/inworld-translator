@@ -1,7 +1,7 @@
 // Shared build settings. Personal values (signing team, bundle ID) go in
 // Local.xcconfig next to this file, which is not committed. See README.md.
 
-PRODUCT_BUNDLE_IDENTIFIER = com.example.InworldTranslator
+PRODUCT_BUNDLE_IDENTIFIER = com.example.Translator
 CODE_SIGN_STYLE = Automatic
 DEVELOPMENT_TEAM =
 

@@ -1,4 +1,4 @@
-name: InworldTranslator
+name: Translator
 options:
   bundleIdPrefix: com.example
   deploymentTarget:
@@ -19,7 +19,7 @@ settings:
     DEAD_CODE_STRIPPING: YES
 
 targets:
-  InworldTranslator:
+  Translator:
     type: application
     platform: iOS
     configFiles:
@@ -65,9 +65,9 @@ targets:
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
 
 schemes:
-  InworldTranslator:
+  Translator:
     build:
       targets:
-        InworldTranslator: all
+        Translator: all
     run:
       config: Debug
