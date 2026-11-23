@@ -65,7 +65,7 @@ extension TranslationViewController {
 
         let on = viewModel.isBidirectional
         var configuration = toggleConfiguration(isOn: on)
-        configuration.image = UIImage(systemName: "arrow.left.arrow.right")
+        configuration.image = UIImage(systemName: "arrow.left.arrow.right", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
         bidirectionalButton.configuration = configuration
         bidirectionalButton.isEnabled = canChange && viewModel.canUseBidirectional
         bidirectionalButton.accessibilityValue = on ? String(localized: "On") : String(localized: "Off")

@@ -83,15 +83,16 @@ extension TranslationViewController {
         button.configuration = TranslationTheme.pill(fill: fill, foreground: TranslationTheme.accent)
         button.configuration?.buttonSize = .small
         button.configuration?.titleLineBreakMode = .byTruncatingTail
-        button.configuration?.image = UIImage(systemName: "chevron.down")
+        button.configuration?.image = UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
         button.configuration?.imagePlacement = .trailing
         button.configuration?.imagePadding = 6
-        button.titleLabel?.numberOfLines = 1
         button.titleLabel?.adjustsFontSizeToFitWidth = true
         button.titleLabel?.minimumScaleFactor = 0.6
         button.configurationUpdateHandler = { button in
             guard var configuration = button.configuration else { return }
             let textColor = button.isEnabled ? TranslationTheme.accent : TranslationTheme.secondaryText
+            let stacked = Self.stacksLanguagePickers(in: button.traitCollection)
+            configuration.titleLineBreakMode = stacked ? .byWordWrapping : .byTruncatingTail
             configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
                 var attributes = attributes
                 attributes.font = TranslationTheme.rounded(.preferredFont(forTextStyle: .subheadline))
@@ -100,6 +101,10 @@ extension TranslationViewController {
             }
             configuration.imageColorTransformer = UIConfigurationColorTransformer { _ in textColor }
             button.configuration = configuration
+            button.titleLabel?.numberOfLines = stacked ? 0 : 1
+        }
+        button.registerForTraitChanges([UITraitPreferredContentSizeCategory.self, UITraitVerticalSizeClass.self]) { (button: UIButton, _) in
+            button.setNeedsUpdateConfiguration()
         }
         button.accessibilityLabel = mode.title
         button.addAction(UIAction { [weak self] _ in

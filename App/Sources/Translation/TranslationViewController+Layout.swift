@@ -4,11 +4,23 @@ import UIKit
 import UniformTypeIdentifiers
 
 extension TranslationViewController {
+    static func stacksLanguagePickers(in traits: UITraitCollection) -> Bool {
+        traits.preferredContentSizeCategory.isAccessibilityCategory && traits.verticalSizeClass != .compact
+    }
+
     func layout() {
         let languagePickers = UIStackView(arrangedSubviews: [sourceButton, targetButton])
         languagePickers.distribution = .fillEqually
         languagePickers.spacing = 8
+        let updateLanguagePickerAxis = { (traits: UITraitCollection) in
+            languagePickers.axis = Self.stacksLanguagePickers(in: traits) ? .vertical : .horizontal
+        }
+        updateLanguagePickerAxis(traitCollection)
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self, UITraitVerticalSizeClass.self]) { (controller: TranslationViewController, _) in
+            updateLanguagePickerAxis(controller.traitCollection)
+        }
         let languageRow = UIStackView(arrangedSubviews: [languagePickers, bidirectionalButton])
+        languageRow.alignment = .center
         languageRow.spacing = 8
         languageRow.translatesAutoresizingMaskIntoConstraints = false
 
@@ -36,8 +48,10 @@ extension TranslationViewController {
             languageRow.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
             languageRow.leadingAnchor.constraint(equalTo: readable.leadingAnchor),
             languageRow.trailingAnchor.constraint(equalTo: readable.trailingAnchor),
-            languageRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            sourceButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            targetButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             bidirectionalButton.widthAnchor.constraint(equalToConstant: 44),
+            bidirectionalButton.heightAnchor.constraint(equalToConstant: 44),
 
             tableView.topAnchor.constraint(equalTo: languageRow.bottomAnchor, constant: 8),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
