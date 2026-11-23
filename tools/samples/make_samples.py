@@ -20,7 +20,8 @@ OUT = HERE / "out"
 
 def render(sample, workdir):
     aiff = workdir / f"{sample['id']}.aiff"
-    subprocess.run(["say", "-v", sample["voice"], "-o", str(aiff), sample["text"]], check=True)
+    speech = sample.get("speech", sample["text"])
+    subprocess.run(["say", "-v", sample["voice"], "-o", str(aiff), speech], check=True)
 
     variant = sample.get("variant")
     filters = []

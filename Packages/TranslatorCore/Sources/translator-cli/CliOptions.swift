@@ -10,6 +10,7 @@ struct Options {
     var only: Set<String>?
     var dropEvery: Double?
     var model: String?
+    var useServerTurnDefaults = false
     var speak = false
     var speakingRate = 1.0
     var report: URL?
@@ -38,6 +39,7 @@ struct Options {
             case "--only": options.only = Set(value(argument).split(separator: ",").map(String.init))
             case "--drop-every": options.dropEvery = number(argument)
             case "--model": options.model = value(argument)
+            case "--server-turn-defaults": options.useServerTurnDefaults = true
             case "--speak": options.speak = true
             case "--speaking-rate": options.speakingRate = number(argument)
             case "--report": options.report = URL(fileURLWithPath: value(argument))
@@ -46,7 +48,7 @@ struct Options {
             case "--output-price": options.outputPricePerMillion = number(argument)
             case "--tts-price": options.ttsPricePerMillion = number(argument)
             case "-h", "--help":
-                print("usage: translator-cli MANIFEST [--base-url URL] [--speed X] [--loops N] [--only ids] [--drop-every S] [--model ID] [--speak] [--speaking-rate X] [--report PATH]")
+                print("usage: translator-cli MANIFEST [--base-url URL] [--speed X] [--loops N] [--only ids] [--drop-every S] [--model ID] [--server-turn-defaults] [--speak] [--speaking-rate X] [--report PATH]")
                 exit(0)
             default:
                 if argument.hasPrefix("-") { fail("unknown option \(argument)") }

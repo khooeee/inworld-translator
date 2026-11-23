@@ -124,6 +124,8 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
 
 - **Partials.** Interim transcripts revise one provisional phrase in place.
   The final transcript commits it once and sends it for translation.
+- **Pauses.** Inworld starts checking for the end of a turn after 384 ms of
+  silence. It finalizes at a confidence of 0.7 or after 1,152 ms of silence.
 - **Long stretches of speech.** When a phrase stays open for 8 seconds,
   the app asks Inworld to finalize it so translation can start while the
   speaker continues.
@@ -262,6 +264,7 @@ the sample files. It reports for each clip:
 
 - the detected language;
 - the character error rate against the script;
+- the number of phrases, to spot speech split across captions;
 - end-of-speech → caption latency.
 
 The summary adds:
@@ -298,6 +301,16 @@ INWORLD_API_KEY=mock-api-key $BIN tools/samples/manifest.json \
 ```
 
 The CLI exits with status 1 if an integrity check fails.
+
+To compare turn settings on the same audio, run these commands with a live
+key after generating the samples. Check whether the sample with a pause
+before the flight time stays in one caption, and compare caption delay on
+the uninterrupted sample.
+
+```sh
+$BIN tools/samples/manifest.json --only es-name-time,es-flight-hesitation --server-turn-defaults --report tools/reports/turns-server.json
+$BIN tools/samples/manifest.json --only es-name-time,es-flight-hesitation --report tools/reports/turns-tuned.json
+```
 
 ## Validation results
 

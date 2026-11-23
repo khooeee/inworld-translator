@@ -13,6 +13,7 @@
 //   --only a,b          play only these sample IDs
 //   --drop-every SECS   cut the STT connection this often (mock server only)
 //   --model ID          translation model
+//   --server-turn-defaults   compare with the server's turn detection settings
 //   --speak             also turn each translation into speech with Inworld
 //                       TTS (not played out loud) and report how long the
 //                       audio takes to start. Clips wait while speech "plays",
@@ -64,6 +65,7 @@ let synthesizer = MeteredSynthesizer(client)
 let audio = PCMFileAudioSource(playlist: clips, speed: options.speed)
 
 var sessionConfiguration = TranslationSession.Configuration()
+if options.useServerTurnDefaults { sessionConfiguration.stt = STTConfiguration() }
 sessionConfiguration.idleTimeout = nil
 let session = TranslationSession(
     audio: audio,
@@ -223,11 +225,12 @@ let ttsCost = Double(speech.characters) / 1e6 * options.ttsPricePerMillion
 let elapsed = Date().timeIntervalSince(startedAt)
 
 print("\n=== Per clip ===")
-print("id                       lang  detected   CER    speech→caption")
+print("id                       lang  detected   CER     phrases  speech→caption")
 for result in results {
     let detected = result.detectedLanguages.isEmpty ? "–" : Array(Set(result.detectedLanguages)).sorted().joined(separator: ",")
     let flag = result.detectedLanguages.contains(result.expectedLanguage) ? " " : "✗"
-    print(pad(result.id, 24) + " " + pad(result.expectedLanguage, 5) + " " + flag + pad(detected, 9) + String(format: " %5.1f%%  ", result.characterErrorRate * 100) + ms(result.speechEndToCaptionSeconds))
+    let metrics = String(format: " %5.1f%%  %7d  ", result.characterErrorRate * 100, result.phrases)
+    print(pad(result.id, 24) + " " + pad(result.expectedLanguage, 5) + " " + flag + pad(detected, 9) + metrics + ms(result.speechEndToCaptionSeconds))
 }
 
 print("\n=== Summary ===")
