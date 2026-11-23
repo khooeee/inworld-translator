@@ -100,7 +100,7 @@ struct CaptionFrame {
         UIColor(white: 0.08, alpha: 1).setFill()
         UIRectFill(CGRect(x: 0, y: 0, width: width, height: height))
         if content.rows.isEmpty {
-            let text = Text(content.emptyText, size: 36, weight: .semibold, color: .white)
+            let text = Text(content.emptyText, size: 28, weight: .semibold, color: .white)
             text.draw(y: max(padding, (CGFloat(height) - text.height) / 2), height: text.height)
         } else {
             drawRows(content.rows)
@@ -148,12 +148,12 @@ struct CaptionFrame {
 
         init(row: Row) {
             original = row.translation == nil
-                ? Text(row.original, size: 42, weight: .semibold, color: .white)
-                : Text(row.original, size: 32, weight: .regular, color: UIColor(white: 0.8, alpha: 1))
+                ? Text(row.original, size: 32, weight: .semibold, color: .white)
+                : Text(row.original, size: 24, weight: .regular, color: UIColor(white: 0.8, alpha: 1))
             if let text = row.translation {
                 translation = row.isTranslating
-                    ? Text(text, size: 36, weight: .regular, color: UIColor(white: 0.8, alpha: 1))
-                    : Text(text, size: 42, weight: .semibold, color: .white)
+                    ? Text(text, size: 28, weight: .regular, color: UIColor(white: 0.8, alpha: 1))
+                    : Text(text, size: 32, weight: .semibold, color: .white)
             } else {
                 translation = nil
             }
