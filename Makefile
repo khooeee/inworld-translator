@@ -1,4 +1,4 @@
-.PHONY: project
+.PHONY: xcodegen
 
-project:
+xcodegen:
 	xcodegen generate
