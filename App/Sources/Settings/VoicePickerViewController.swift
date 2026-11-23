@@ -89,9 +89,18 @@ final class VoicePickerViewController: UITableViewController, UISearchResultsUpd
 
     private func renderCatalog() {
         let query = search.searchBar.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        visibleVoices = query.isEmpty ? voices : voices.filter { voice in
+        var filtered = query.isEmpty ? voices : voices.filter { voice in
             voice.name.localizedStandardContains(query) || Self.languageName(for: voice)?.localizedStandardContains(query) == true
         }
+        let selectedID = preference.id
+        filtered.sort {
+            let lhsSelected = $0.id == selectedID
+            let rhsSelected = $1.id == selectedID
+            if lhsSelected != rhsSelected { return lhsSelected }
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+        visibleVoices = filtered
         switch catalogState {
         case .loading:
             var configuration = UIContentUnavailableConfiguration.loading()
@@ -183,7 +192,7 @@ final class VoicePickerViewController: UITableViewController, UISearchResultsUpd
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         preference.select(visibleVoices[indexPath.row].id)
         tableView.deselectRow(at: indexPath, animated: true)
-        tableView.reloadData()
+        renderCatalog()
     }
 
     private func togglePreview(of voice: Voice) {
