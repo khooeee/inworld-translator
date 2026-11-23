@@ -37,6 +37,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         navigation.navigationBar.prefersLargeTitles = false
 
         let window = UIWindow(windowScene: windowScene)
+        window.tintColor = TranslationTheme.accent
         window.rootViewController = navigation
         window.makeKeyAndVisible()
         self.window = window

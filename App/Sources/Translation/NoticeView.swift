@@ -12,8 +12,9 @@ final class NoticeView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = .secondarySystemBackground
-        layer.cornerRadius = 12
+        backgroundColor = TranslationTheme.original
+        layer.cornerRadius = 20
+        layer.cornerCurve = .continuous
 
         label.font = .preferredFont(forTextStyle: .subheadline)
         label.adjustsFontForContentSizeCategory = true
@@ -25,7 +26,7 @@ final class NoticeView: UIView {
         actionButton.addAction(UIAction { [weak self] _ in self?.onAction?() }, for: .primaryActionTriggered)
 
         closeButton.configuration?.image = UIImage(systemName: "xmark.circle.fill")
-        closeButton.configuration?.baseForegroundColor = .tertiaryLabel
+        closeButton.configuration?.baseForegroundColor = TranslationTheme.secondaryText
         closeButton.accessibilityLabel = String(localized: "Dismiss")
         closeButton.addAction(UIAction { [weak self] _ in self?.onDismiss?() }, for: .primaryActionTriggered)
         closeButton.setContentHuggingPriority(.required, for: .horizontal)

@@ -5,6 +5,15 @@ import UniformTypeIdentifiers
 
 extension TranslationViewController {
     func configureNavigationItems() {
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithTransparentBackground()
+        appearance.titleTextAttributes = [
+            .font: TranslationTheme.rounded(.systemFont(ofSize: 19, weight: .bold)),
+            .foregroundColor: TranslationTheme.accent,
+        ]
+        navigationItem.standardAppearance = appearance
+        navigationItem.scrollEdgeAppearance = appearance
+
         func copyAction(_ content: TranslationViewModel.TranscriptContent, title: String, icon: String) -> UIAction {
             UIAction(title: title, image: UIImage(systemName: icon)) { [weak self] _ in
                 guard let self else { return }
@@ -70,7 +79,8 @@ extension TranslationViewController {
     }
 
     func configureLanguageButton(_ button: UIButton, mode: LanguagePickerViewController.Mode) {
-        button.configuration?.cornerStyle = .capsule
+        let fill = mode == .source ? TranslationTheme.original : TranslationTheme.translated
+        button.configuration = TranslationTheme.pill(fill: fill, foreground: TranslationTheme.accent)
         button.configuration?.buttonSize = .small
         button.configuration?.titleLineBreakMode = .byTruncatingTail
         button.configuration?.image = UIImage(systemName: "chevron.down")
@@ -79,6 +89,18 @@ extension TranslationViewController {
         button.titleLabel?.numberOfLines = 1
         button.titleLabel?.adjustsFontSizeToFitWidth = true
         button.titleLabel?.minimumScaleFactor = 0.6
+        button.configurationUpdateHandler = { button in
+            guard var configuration = button.configuration else { return }
+            let textColor = button.isEnabled ? TranslationTheme.accent : TranslationTheme.secondaryText
+            configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+                var attributes = attributes
+                attributes.font = TranslationTheme.rounded(.preferredFont(forTextStyle: .subheadline))
+                attributes.foregroundColor = textColor
+                return attributes
+            }
+            configuration.imageColorTransformer = UIConfigurationColorTransformer { _ in textColor }
+            button.configuration = configuration
+        }
         button.accessibilityLabel = mode.title
         button.addAction(UIAction { [weak self] _ in
             guard let self, self.viewModel.canChangeLanguages else { return }
@@ -99,7 +121,9 @@ extension TranslationViewController {
         tableView.register(PhraseCell.self, forCellReuseIdentifier: PhraseCell.reuseIdentifier)
         tableView.delegate = self
         tableView.allowsSelection = false
-        tableView.backgroundColor = .systemBackground
+        tableView.backgroundColor = TranslationTheme.canvas
+        tableView.separatorStyle = .none
+        tableView.contentInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
         tableView.keyboardDismissMode = .onDrag
         tableView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -112,13 +136,6 @@ extension TranslationViewController {
             return cell
         }
         dataSource.defaultRowAnimation = .fade
-
-        emptyLabel.text = String(localized: "Tap Start to listen.")
-        emptyLabel.font = .preferredFont(forTextStyle: .body)
-        emptyLabel.adjustsFontForContentSizeCategory = true
-        emptyLabel.textColor = .secondaryLabel
-        emptyLabel.textAlignment = .center
-        emptyLabel.numberOfLines = 0
     }
 
     func configureNotice() {
@@ -143,12 +160,22 @@ extension TranslationViewController {
         start.cornerStyle = .capsule
         start.buttonSize = .large
         start.imagePadding = 8
+        start.baseForegroundColor = .white
         start.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
             var attributes = attributes
-            attributes.font = UIFont.preferredFont(forTextStyle: .headline)
+            attributes.font = TranslationTheme.rounded(.preferredFont(forTextStyle: .headline))
             return attributes
         }
         startButton.configuration = start
+        startButton.configurationUpdateHandler = { button in
+            guard var configuration = button.configuration else { return }
+            if configuration.baseBackgroundColor == TranslationTheme.primary, !button.isHighlighted {
+                configuration.background.image = TranslationTheme.startBackground
+            } else {
+                configuration.background.image = nil
+            }
+            button.configuration = configuration
+        }
         startButton.translatesAutoresizingMaskIntoConstraints = false
         startButton.addAction(UIAction { [weak self] _ in self?.viewModel.toggle() }, for: .primaryActionTriggered)
 
@@ -160,14 +187,11 @@ extension TranslationViewController {
             self.viewModel.setSpeaksTranslations(!self.viewModel.speaksTranslations)
         }, for: .primaryActionTriggered)
 
-        var jump = UIButton.Configuration.filled()
-        jump.cornerStyle = .capsule
+        var jump = TranslationTheme.pill(fill: TranslationTheme.translated, foreground: TranslationTheme.accent)
         jump.buttonSize = .large
         jump.title = String(localized: "Jump to Latest")
         jump.image = UIImage(systemName: "forward.end.fill")
         jump.imagePadding = 8
-        jump.baseBackgroundColor = .secondarySystemBackground
-        jump.baseForegroundColor = .label
         jumpButton.configuration = jump
         jumpButton.accessibilityHint = String(localized: "Skips translations waiting to be spoken.")
         jumpButton.isHidden = true

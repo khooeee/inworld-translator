@@ -61,7 +61,9 @@ final class APIKeyViewController: UIViewController {
 
         var save = UIButton.Configuration.filled()
         save.title = String(localized: "Check and Save")
-        save.cornerStyle = .large
+        save.cornerStyle = .capsule
+        save.baseBackgroundColor = TranslationTheme.primary
+        save.baseForegroundColor = .white
         save.buttonSize = .large
         saveButton.configuration = save
         saveButton.addAction(UIAction { [weak self] _ in self?.save() }, for: .primaryActionTriggered)

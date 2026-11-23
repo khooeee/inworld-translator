@@ -20,12 +20,12 @@ extension TranslationViewController {
         if status.isRunning {
             configuration.title = String(localized: "Stop")
             configuration.image = UIImage(systemName: "stop.fill")
-            configuration.baseBackgroundColor = .systemRed
+            configuration.baseBackgroundColor = TranslationTheme.stop
             startButton.accessibilityHint = String(localized: "Stops listening and releases the microphone.")
         } else {
             configuration.title = String(localized: "Start")
             configuration.image = UIImage(systemName: "mic.fill")
-            configuration.baseBackgroundColor = .tintColor
+            configuration.baseBackgroundColor = TranslationTheme.primary
             startButton.accessibilityHint = String(localized: "Listens to speech and translates it into the selected language.")
             levelMeter.reset()
         }
@@ -64,8 +64,7 @@ extension TranslationViewController {
         targetButton.accessibilityValue = target
 
         let on = viewModel.isBidirectional
-        var configuration: UIButton.Configuration = on ? .tinted() : .gray()
-        configuration.cornerStyle = .capsule
+        var configuration = toggleConfiguration(isOn: on)
         configuration.image = UIImage(systemName: "arrow.left.arrow.right")
         bidirectionalButton.configuration = configuration
         bidirectionalButton.isEnabled = canChange && viewModel.canUseBidirectional
@@ -77,13 +76,19 @@ extension TranslationViewController {
 
     func renderSpeechToggle() {
         let on = viewModel.speaksTranslations
-        var configuration = on ? UIButton.Configuration.tinted() : UIButton.Configuration.gray()
-        configuration.cornerStyle = .capsule
+        var configuration = toggleConfiguration(isOn: on)
         configuration.buttonSize = .large
         configuration.image = UIImage(systemName: on ? "speaker.wave.2.fill" : "speaker.slash.fill")
         speakButton.configuration = configuration
         speakButton.accessibilityValue = on ? String(localized: "On") : String(localized: "Off")
         renderJumpButton()
+    }
+
+    private func toggleConfiguration(isOn: Bool) -> UIButton.Configuration {
+        TranslationTheme.pill(
+            fill: isOn ? TranslationTheme.original : TranslationTheme.translated,
+            foreground: isOn ? TranslationTheme.accent : TranslationTheme.secondaryText
+        )
     }
 
     func renderJumpButton() {
@@ -116,7 +121,7 @@ extension TranslationViewController {
     }
 
     func updateEmptyState() {
-        tableView.backgroundView = viewModel.phrases.isEmpty ? emptyLabel : nil
+        tableView.backgroundView = viewModel.phrases.isEmpty ? emptyView : nil
     }
 
     func scrollToLatest(animated: Bool) {
