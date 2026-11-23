@@ -272,9 +272,13 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
                 voiceId: voiceID,
                 modelId: configuration.ttsModel,
                 language: language.rawValue,
-                speakingRate: speakingRate,
                 // PCM is headerless; LINEAR16 would put a WAV header on every chunk.
-                audioConfig: .init(audioEncoding: "PCM", sampleRateHertz: SpeechAudio.sampleRate)
+                audioConfig: .init(
+                    audioEncoding: "PCM",
+                    sampleRateHertz: SpeechAudio.sampleRate,
+                    // The service takes the speed inside audioConfig, not on the request.
+                    speakingRate: speakingRate
+                )
             )
         )
 
@@ -386,13 +390,13 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         struct AudioConfig: Encodable {
             let audioEncoding: String
             let sampleRateHertz: Int
+            let speakingRate: Double
         }
 
         let text: String
         let voiceId: String
         let modelId: String
         let language: String
-        let speakingRate: Double
         let audioConfig: AudioConfig
     }
 

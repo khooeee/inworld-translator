@@ -185,7 +185,7 @@ export async function startMockInworld({
     if (!text || !body.voiceId || !body.modelId) {
       return json(res, 400, { code: 3, message: 'text, voiceId and modelId are required', details: [] });
     }
-    const speakingRate = body.speakingRate ?? 1;
+    const speakingRate = body.audioConfig?.speakingRate ?? 1;
     if (typeof speakingRate !== 'number' || speakingRate < 0.5 || speakingRate > 1.5) {
       return json(res, 400, { code: 3, message: 'speakingRate must be between 0.5 and 1.5', details: [] });
     }
