@@ -62,6 +62,7 @@ export async function startMockInworld({
     breakCompletions: 0, // end the next N completion streams without [DONE]
     failSpeech: 0, // fail the next N TTS requests with speechStatus
     speechStatus: 500,
+    stallSpeechMs: 0, // delay before the first TTS chunk, to stand in for time-to-first-audio
     breakSpeech: 0, // fail the next N TTS streams halfway, with an in-band error
   };
 
@@ -204,7 +205,9 @@ export async function startMockInworld({
     if (breakAt !== -1) faults.breakSpeech -= 1;
 
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    if (faults.stallSpeechMs > 0) await sleep(faults.stallSpeechMs);
     for (let index = 0; index < chunks; index += 1) {
+      if (res.destroyed) return;
       await sleep(chunkDelayMs);
       if (res.destroyed) return;
       if (index === breakAt) {

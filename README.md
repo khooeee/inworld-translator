@@ -151,7 +151,9 @@ Off by default; the setting is remembered. When it is on:
   Speech already in the target language, failed translations, and
   unintelligible phrases are skipped.
 - **Order.** Phrases are spoken in the order they were heard, even when their
-  translations finish out of order. One phrase plays at a time.
+  translations finish out of order. One phrase plays at a time. While one
+  phrase plays, the next phrase's audio is requested ahead, so consecutive
+  phrases play without a pause for the network.
 - **Taking turns.** Speech waits while someone is mid-sentence and starts at
   the next pause. A phrase already playing finishes.
 - **Listening during playback.** With wired headphones or a Bluetooth

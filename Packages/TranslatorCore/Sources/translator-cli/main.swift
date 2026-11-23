@@ -172,6 +172,8 @@ final class Collector: @unchecked Sendable {
     var printed: Set<PhraseID> = []
     var spoken: [PhraseID] = []
     var speaking: PhraseID?
+    /// When each phrase started to be spoken, in order.
+    var speechStarts: [(PhraseID, Date)] = []
 
     // Ordering and stability, checked as events arrive.
     var newestID: PhraseID?
@@ -229,6 +231,7 @@ let consumer = Task {
             collector.speaking = id
             if let id {
                 collector.spoken.append(id)
+                collector.speechStarts.append((id, Date()))
                 print("  🔈 speaking \(id)")
             }
         case .level, .speechQueueDepth:
@@ -394,10 +397,16 @@ print("Final transcript → complete English:   p50 \(ms(percentile(fullTranslat
 print("End of speech → complete English:      p50 \(ms(percentile(speechToCaption, 0.5))), p95 \(ms(percentile(speechToCaption, 0.95)))")
 print("Reconnects: \(reconnects), notices: \(collector.notices.isEmpty ? "none" : collector.notices.map { "\($0)" }.joined(separator: ", "))")
 print("Integrity: \(integrityProblems == 0 ? "ok" : "PROBLEMS") — new phrases out of order \(collector.outOfOrder), changed after settling \(collector.changedAfterSettling), final reopened \(collector.reopened), unsettled after Stop \(unsettled)\(options.speak ? ", spoken out of order \(spokenOutOfOrder)" : "")")
+let speechStartDelays = collector.speechStarts.compactMap { (id, at) in
+    collector.phrases[id]?.timing.translationCompletedAt.map { at.timeIntervalSince($0) }
+}
+let speechGaps = zip(collector.speechStarts, collector.speechStarts.dropFirst()).map { $1.1.timeIntervalSince($0.1) }
 if options.speak {
     print("Speech: \(collector.spoken.count) phrases spoken, \(speech.requests) requests (\(speech.failures) failed), \(speech.characters) characters, " + String(format: "%.0fs of audio", audio.speechSeconds))
     print("Speech request → first audio: p50 \(ms(percentile(speech.firstAudio, 0.5))), p95 \(ms(percentile(speech.firstAudio, 0.95)))")
     print("Speech speed: \(options.speakingRate)×")
+    print("Translation complete → speech start: p50 \(ms(percentile(speechStartDelays, 0.5))), p95 \(ms(percentile(speechStartDelays, 0.95)))")
+    print("Time between spoken phrases: p50 \(ms(percentile(speechGaps, 0.5))), p95 \(ms(percentile(speechGaps, 0.95)))")
 }
 print(String(format: "Audio streamed: %.0fs; session wall time: %.0fs", audioSeconds, elapsed))
 print("Translation requests: \(usage.requests), tokens in/out: \(usage.prompt)/\(usage.completion), models: \(usage.models.map { "\($0.key) ×\($0.value)" }.sorted().joined(separator: ", "))")
@@ -422,6 +431,10 @@ if let reportURL = options.report {
         let speakingRate: Double
         let speechFirstAudioP50: Double?
         let speechFirstAudioP95: Double?
+        let speechStartDelayP50: Double?
+        let speechStartDelayP95: Double?
+        let speechGapP50: Double?
+        let speechGapP95: Double?
         let audioSeconds: Double
         let promptTokens: Int
         let completionTokens: Int
@@ -437,6 +450,8 @@ if let reportURL = options.report {
         phrasesSpoken: collector.spoken.count, speechCharacters: speech.characters,
         speakingRate: options.speakingRate,
         speechFirstAudioP50: percentile(speech.firstAudio, 0.5), speechFirstAudioP95: percentile(speech.firstAudio, 0.95),
+        speechStartDelayP50: percentile(speechStartDelays, 0.5), speechStartDelayP95: percentile(speechStartDelays, 0.95),
+        speechGapP50: percentile(speechGaps, 0.5), speechGapP95: percentile(speechGaps, 0.95),
         audioSeconds: audioSeconds,
         promptTokens: usage.prompt, completionTokens: usage.completion,
         estimatedCostUSD: totalCost, memoryMegabytes: memorySamples.map(\.1)
