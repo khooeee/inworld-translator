@@ -28,83 +28,6 @@ import Darwin
 import Foundation
 import TranslatorCore
 
-struct Options {
-    var manifest: URL
-    var baseURL = URL(string: "https://api.inworld.ai")!
-    var speed = 1.0
-    var loops = 1
-    var only: Set<String>?
-    var dropEvery: Double?
-    var model: String?
-    var speak = false
-    var speakingRate = 1.0
-    var report: URL?
-    var sttPricePerHour = 0.15
-    var inputPricePerMillion = 0.10
-    var outputPricePerMillion = 0.40
-    var ttsPricePerMillion = 15.0
-
-    static func parse(_ arguments: [String]) -> Options {
-        var manifest: URL?
-        var options = Options(manifest: URL(fileURLWithPath: "/"))
-        var iterator = arguments.dropFirst().makeIterator()
-        func value(_ flag: String) -> String {
-            guard let value = iterator.next() else { fail("\(flag) needs a value") }
-            return value
-        }
-        func number(_ flag: String) -> Double {
-            guard let number = Double(value(flag)) else { fail("\(flag) needs a number") }
-            return number
-        }
-        while let argument = iterator.next() {
-            switch argument {
-            case "--base-url": options.baseURL = URL(string: value(argument)) ?? { fail("bad --base-url") }()
-            case "--speed": options.speed = number(argument)
-            case "--loops": options.loops = Int(number(argument))
-            case "--only": options.only = Set(value(argument).split(separator: ",").map(String.init))
-            case "--drop-every": options.dropEvery = number(argument)
-            case "--model": options.model = value(argument)
-            case "--speak": options.speak = true
-            case "--speaking-rate": options.speakingRate = number(argument)
-            case "--report": options.report = URL(fileURLWithPath: value(argument))
-            case "--stt-price": options.sttPricePerHour = number(argument)
-            case "--input-price": options.inputPricePerMillion = number(argument)
-            case "--output-price": options.outputPricePerMillion = number(argument)
-            case "--tts-price": options.ttsPricePerMillion = number(argument)
-            case "-h", "--help":
-                print("usage: translator-cli MANIFEST [--base-url URL] [--speed X] [--loops N] [--only ids] [--drop-every S] [--model ID] [--speak] [--speaking-rate X] [--report PATH]")
-                exit(0)
-            default:
-                if argument.hasPrefix("-") { fail("unknown option \(argument)") }
-                manifest = URL(fileURLWithPath: argument)
-            }
-        }
-        guard let manifest else { fail("give the path to a samples manifest") }
-        let range = InworldClient.Configuration.speakingRateRange
-        guard range.contains(options.speakingRate) else {
-            fail("--speaking-rate must be between \(range.lowerBound) and \(range.upperBound)")
-        }
-        options.manifest = manifest
-        return options
-    }
-}
-
-func fail(_ message: String) -> Never {
-    FileHandle.standardError.write(Data("error: \(message)\n".utf8))
-    exit(2)
-}
-
-struct Manifest: Decodable {
-    struct Sample: Decodable {
-        let id: String
-        let language: String
-        let text: String
-        let english: String
-    }
-
-    let samples: [Sample]
-}
-
 // MARK: - Run
 
 let options = Options.parse(CommandLine.arguments)
@@ -164,37 +87,6 @@ func residentMegabytes() -> Double {
     return result == KERN_SUCCESS ? Double(info.resident_size) / 1_048_576 : 0
 }
 
-final class Collector: @unchecked Sendable {
-    // Touched only from the single consumer task below.
-    var phrases: [PhraseID: Phrase] = [:]
-    var statuses: [(Date, SessionStatus)] = []
-    var notices: [SessionNotice] = []
-    var printed: Set<PhraseID> = []
-    var spoken: [PhraseID] = []
-    var speaking: PhraseID?
-    /// When each phrase started to be spoken, in order.
-    var speechStarts: [(PhraseID, Date)] = []
-
-    // Ordering and stability, checked as events arrive.
-    var newestID: PhraseID?
-    var outOfOrder = 0
-    var changedAfterSettling = 0
-    var reopened = 0
-
-    func check(_ phrase: Phrase) {
-        guard let previous = phrases[phrase.id] else {
-            if let newestID, phrase.id < newestID { outOfOrder += 1 }
-            newestID = phrase.id
-            return
-        }
-        if previous.isSettled, (previous.sourceText, previous.translation) != (phrase.sourceText, phrase.translation) {
-            changedAfterSettling += 1
-        }
-        if previous.sourceState != .provisional, phrase.sourceState == .provisional {
-            reopened += 1
-        }
-    }
-}
 
 let collector = Collector()
 let startedAt = Date()
@@ -277,55 +169,6 @@ consumer.cancel()
 memorySamples.append((Date().timeIntervalSince(startedAt), residentMegabytes()))
 
 // MARK: - Report
-
-/// Characters that carry meaning, lowercased, so punctuation, spacing and
-/// case do not count as recognition errors.
-func normalized(_ text: String) -> [Character] {
-    Array(text.lowercased().unicodeScalars
-        .filter { CharacterSet.alphanumerics.contains($0) }
-        .map(Character.init))
-}
-
-func editDistance(_ a: [Character], _ b: [Character]) -> Int {
-    if a.isEmpty { return b.count }
-    if b.isEmpty { return a.count }
-    var previous = Array(0...b.count)
-    for (i, x) in a.enumerated() {
-        var current = [i + 1] + Array(repeating: 0, count: b.count)
-        for (j, y) in b.enumerated() {
-            current[j + 1] = min(previous[j + 1] + 1, current[j] + 1, previous[j] + (x == y ? 0 : 1))
-        }
-        previous = current
-    }
-    return previous[b.count]
-}
-
-func percentile(_ values: [Double], _ p: Double) -> Double? {
-    guard !values.isEmpty else { return nil }
-    let sorted = values.sorted()
-    return sorted[min(sorted.count - 1, Int((Double(sorted.count - 1) * p).rounded()))]
-}
-
-func pad(_ text: String, _ width: Int) -> String {
-    text.count >= width ? text : text + String(repeating: " ", count: width - text.count)
-}
-
-func ms(_ value: Double?) -> String {
-    value.map { String(format: "%.0f ms", $0 * 1000) } ?? "–"
-}
-
-struct ClipResult: Encodable {
-    let id: String
-    let expectedLanguage: String
-    let detectedLanguages: [String]
-    let reference: String
-    let recognized: String
-    let characterErrorRate: Double
-    let referenceEnglish: String
-    let english: String
-    let phrases: Int
-    let speechEndToCaptionSeconds: Double?
-}
 
 let playback = audio.playback
 let phrases = collector.phrases.values.sorted { $0.id < $1.id }
@@ -415,33 +258,8 @@ print(String(format: "Estimated cost: STT $%.4f + LLM $%.4f\(options.speak ? Str
 print("Memory (MB resident): " + memorySamples.map { String(format: "%.0fs %.1f", $0.0, $0.1) }.joined(separator: " · "))
 
 if let reportURL = options.report {
-    struct Report: Encodable {
-        let baseURL: String
-        let speed: Double
-        let clips: [ClipResult]
-        let firstTextLatencyP50: Double?
-        let translationLatencyP50: Double?
-        let translationLatencyP95: Double?
-        let speechToCaptionP50: Double?
-        let speechToCaptionP95: Double?
-        let reconnects: Int
-        let integrityProblems: Int
-        let phrasesSpoken: Int
-        let speechCharacters: Int
-        let speakingRate: Double
-        let speechFirstAudioP50: Double?
-        let speechFirstAudioP95: Double?
-        let speechStartDelayP50: Double?
-        let speechStartDelayP95: Double?
-        let speechGapP50: Double?
-        let speechGapP95: Double?
-        let audioSeconds: Double
-        let promptTokens: Int
-        let completionTokens: Int
-        let estimatedCostUSD: Double
-        let memoryMegabytes: [Double]
-    }
-    let report = Report(
+
+    let report = CliReportPayload(
         baseURL: options.baseURL.absoluteString, speed: options.speed, clips: results,
         firstTextLatencyP50: percentile(firstText, 0.5),
         translationLatencyP50: percentile(fullTranslation, 0.5), translationLatencyP95: percentile(fullTranslation, 0.95),
