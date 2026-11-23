@@ -3,7 +3,7 @@
 xcodegen:
 	xcodegen generate
 
-METHOD ?= app-store
+METHOD ?= development
 ARCHIVE_PATH ?= build/Translator.xcarchive
 EXPORT_PATH ?= build/ipa
 
