@@ -23,6 +23,7 @@ final class TranslationViewController: UIViewController {
     private let speakButton = UIButton(configuration: .gray())
     private let pictureInPicture = CaptionPictureInPicture.makeIfSupported()
     private var pictureInPictureButton: UIBarButtonItem?
+    private var automaticPictureInPicture: AutomaticPictureInPicture?
 
     private var dataSource: UITableViewDiffableDataSource<Int, PhraseID>!
     private var pendingExport: URL?
@@ -55,6 +56,7 @@ final class TranslationViewController: UIViewController {
         configureButtons()
         layout()
         bindViewModel()
+        configureAutomaticPictureInPicture()
     }
 
     private func configureNavigationItems() {
@@ -102,7 +104,12 @@ final class TranslationViewController: UIViewController {
         pictureButton.isEnabled = false
         pictureInPictureButton = pictureButton
         navigationItem.rightBarButtonItems = [more, pictureButton]
-        pictureInPicture.onStateChanged = { [weak self] in self?.renderPictureInPictureButton() }
+        pictureInPicture.onStateChanged = { [weak self] in
+            guard let self, let pictureInPicture = self.pictureInPicture else { return }
+            self.renderPictureInPictureButton()
+            // Open the window again on the next app switch.
+            if self.viewModel.status.isRunning { pictureInPicture.prime() }
+        }
         pictureInPicture.onStartFailed = { [weak self] in
             guard let self, self.view.window?.windowScene?.activationState == .foregroundActive,
                   self.presentedViewController == nil else { return }
@@ -333,7 +340,7 @@ final class TranslationViewController: UIViewController {
     }
 
     private func apply(_ changes: TranslationViewModel.PhraseChanges) {
-        if let pictureInPicture, pictureInPicture.isEngaged { updatePictureInPicture(pictureInPicture) }
+        if let pictureInPicture { updatePictureInPicture(pictureInPicture) }
         var snapshot = dataSource.snapshot()
         let structureChanged = !changes.inserted.isEmpty || !changes.removed.isEmpty
         if structureChanged || snapshot.numberOfSections == 0 {
@@ -363,11 +370,14 @@ final class TranslationViewController: UIViewController {
         statusView.show(status, speaking: viewModel.speaking != nil)
         renderLanguages()
         renderJumpButton()
-        if let pictureInPicture, pictureInPicture.isEngaged {
+        if let pictureInPicture {
             if status.isRunning {
                 updatePictureInPicture(pictureInPicture)
+                // Ready to open the window the moment the app leaves the screen.
+                pictureInPicture.prime()
             } else {
-                pictureInPicture.stop()
+                if pictureInPicture.isEngaged { pictureInPicture.stop() }
+                pictureInPicture.unprime()
             }
         }
         renderPictureInPictureButton()
@@ -450,6 +460,19 @@ final class TranslationViewController: UIViewController {
                                 emptyText: ConnectionStatusView.describe(viewModel.status).0)
     }
 
+    /// Moves into the floating window when another app comes forward.
+    private func configureAutomaticPictureInPicture() {
+        guard let pictureInPicture else { return }
+        automaticPictureInPicture = AutomaticPictureInPicture(pictureInPicture: pictureInPicture) { [weak self] in
+            self?.canPictureInPicture == true
+        }
+    }
+
+    private var canPictureInPicture: Bool {
+        let status = viewModel.status
+        return status.isRunning && status != .starting && status != .interrupted
+    }
+
     private func renderPictureInPictureButton() {
         guard let pictureInPicture, let button = pictureInPictureButton else { return }
         if pictureInPicture.isEngaged {
@@ -459,8 +482,7 @@ final class TranslationViewController: UIViewController {
         } else {
             button.image = AVPictureInPictureController.pictureInPictureButtonStartImage
             button.accessibilityLabel = String(localized: "Start Picture in Picture")
-            let status = viewModel.status
-            button.isEnabled = status.isRunning && status != .starting && status != .interrupted
+            button.isEnabled = canPictureInPicture
         }
         // Show the video inline during the system's transition to the floating window.
         if pictureInPicture.showsPreview {

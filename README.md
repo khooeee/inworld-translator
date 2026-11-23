@@ -194,9 +194,10 @@ Off by default; the setting is remembered. When it is on:
 - **Background sessions.** An active session keeps listening and translating
   when you lock the phone or switch apps. Spoken translations continue when
   enabled. Inworld bills for the audio streamed in the background.
-- **Picture in Picture.** While listening, tap the Picture in Picture icon
-  next to **⋯** to show recent originals and translations over other apps.
-  Closing the floating window leaves the listening session running.
+- **Picture in Picture.** While listening, switching apps opens the floating
+  caption window automatically with recent originals and translations, and
+  coming back closes it. The Picture in Picture icon next to **⋯** opens it
+  by hand. Closing the floating window leaves the listening session running.
 - **Automatic stop.** Listening stops after 3 minutes without speech.
 - **Stop.** Stop releases the microphone first. It then closes the stream so
   the last words finalize, waits up to 6 s for translations in flight, and

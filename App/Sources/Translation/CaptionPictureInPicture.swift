@@ -7,7 +7,7 @@ import UIKit
 @MainActor
 final class CaptionPictureInPicture: NSObject {
     private enum Phase {
-        case idle, preparing, starting, active, stopping
+        case idle, priming, preparing, starting, active, stopping
     }
 
     final class SourceView: UIView {
@@ -20,7 +20,13 @@ final class CaptionPictureInPicture: NSObject {
     var onStateChanged: (() -> Void)?
     var onStartFailed: (() -> Void)?
 
-    var isEngaged: Bool { phase != .idle }
+    /// Whether the floating window is opening or open.
+    var isEngaged: Bool {
+        switch phase {
+        case .preparing, .starting, .active, .stopping: true
+        case .idle, .priming: false
+        }
+    }
     var showsPreview: Bool { phase == .preparing || phase == .starting }
 
     private lazy var controller: AVPictureInPictureController = {
@@ -38,6 +44,7 @@ final class CaptionPictureInPicture: NSObject {
     }
     private let paused = Mutex(false)
     private var feed: Task<Void, Never>?
+    private var startDeadline: ContinuousClock.Instant?
     private var content = CaptionFrame.Content(rows: [], emptyText: "")
     private var frame: CaptionFrame?
 
@@ -71,14 +78,40 @@ final class CaptionPictureInPicture: NSObject {
         }
     }
 
+    /// Keeps frames flowing into the video layer so the window can open at
+    /// once, without showing anything.
+    func prime() {
+        guard phase == .idle else { return }
+        phase = .priming
+        beginFeed()
+    }
+
+    /// Stops feeding frames while nothing is listening.
+    func unprime() {
+        guard phase == .priming else { return }
+        finish()
+    }
+
+    /// Opens the window from the background, where there is no time to wait
+    /// for the video layer to warm up.
+    func startAutomatically() {
+        guard !isEngaged else { return }
+        start()
+    }
+
     private func start() {
         guard sourceView.window != nil else { return }
         paused.withLock { $0 = false }
-        phase = .preparing
         controller.invalidatePlaybackState()
-        let deadline = ContinuousClock.now + .seconds(3)
+        startDeadline = ContinuousClock.now + .seconds(3)
+        phase = .preparing
+        if feed == nil { beginFeed() }
+    }
+
+    private func beginFeed() {
+        feed?.cancel()
         feed = Task { [weak self] in
-            while !Task.isCancelled, self?.sendFrame(startDeadline: deadline) == true {
+            while !Task.isCancelled, self?.sendFrame() == true {
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
@@ -86,7 +119,7 @@ final class CaptionPictureInPicture: NSObject {
 
     func stop() {
         switch phase {
-        case .preparing:
+        case .priming, .preparing:
             finish()
         case .starting:
             // AVKit can only stop after the start animation completes.
@@ -102,13 +135,14 @@ final class CaptionPictureInPicture: NSObject {
     private func finish() {
         feed?.cancel()
         feed = nil
+        startDeadline = nil
         frame = nil
         sourceView.videoLayer.sampleBufferRenderer.flush(removingDisplayedImage: true, completionHandler: nil)
         phase = .idle
     }
 
-    private func sendFrame(startDeadline: ContinuousClock.Instant) -> Bool {
-        guard isEngaged else { return false }
+    private func sendFrame() -> Bool {
+        guard isEngaged || phase == .priming else { return false }
         let layer = sourceView.videoLayer
         let renderer = layer.sampleBufferRenderer
         if renderer.requiresFlushToResumeDecoding { renderer.flush() }
@@ -120,7 +154,7 @@ final class CaptionPictureInPicture: NSObject {
             if layer.isReadyForDisplay, controller.isPictureInPicturePossible {
                 phase = .starting
                 controller.startPictureInPicture()
-            } else if ContinuousClock.now >= startDeadline {
+            } else if let startDeadline, ContinuousClock.now >= startDeadline {
                 finish()
                 onStartFailed?()
                 return false
