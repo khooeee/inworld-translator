@@ -9,6 +9,9 @@ import Foundation
 public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizing {
     public struct Configuration: Sendable, Equatable {
         public static let defaultTTSVoice = "Ashley"
+        public static let defaultSpeakingRate = 1.0
+        /// The speeds the service accepts, from slowest to fastest.
+        public static let speakingRateRange: ClosedRange<Double> = 0.5...1.5
 
         public var baseURL: URL
         public var sttModel: String
@@ -66,6 +69,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
 
     private let configuration: Configuration
     private let selectedVoiceID: @Sendable () async -> String?
+    private let selectedSpeakingRate: @Sendable () async -> Double
     private let apiKey: @Sendable () async -> String?
     private let session: URLSession
 
@@ -73,10 +77,12 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         configuration: Configuration = Configuration(),
         session: URLSession? = nil,
         selectedVoiceID: @escaping @Sendable () async -> String? = { nil },
+        selectedSpeakingRate: @escaping @Sendable () async -> Double = { InworldClient.Configuration.defaultSpeakingRate },
         apiKey: @escaping @Sendable () async -> String?
     ) {
         self.configuration = configuration
         self.selectedVoiceID = selectedVoiceID
+        self.selectedSpeakingRate = selectedSpeakingRate
         self.apiKey = apiKey
         if let session {
             self.session = session
@@ -254,6 +260,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         guard !text.isEmpty else { return }
 
         let voiceID = await selectedVoiceID() ?? configuration.ttsVoice
+        let speakingRate = Self.clampedSpeakingRate(await selectedSpeakingRate())
         var request = URLRequest(url: configuration.ttsStreamURL)
         request.httpMethod = "POST"
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -265,6 +272,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
                 voiceId: voiceID,
                 modelId: configuration.ttsModel,
                 language: language.rawValue,
+                speakingRate: speakingRate,
                 // PCM is headerless; LINEAR16 would put a WAV header on every chunk.
                 audioConfig: .init(audioEncoding: "PCM", sampleRateHertz: SpeechAudio.sampleRate)
             )
@@ -284,6 +292,12 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
                 yield(audio)
             }
         }
+    }
+
+    /// Keeps a requested speed inside the range the service accepts.
+    static func clampedSpeakingRate(_ rate: Double) -> Double {
+        guard rate.isFinite else { return Configuration.defaultSpeakingRate }
+        return min(max(rate, Configuration.speakingRateRange.lowerBound), Configuration.speakingRateRange.upperBound)
     }
 
     /// Maps an in-band error's gRPC status code.
@@ -378,6 +392,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         let voiceId: String
         let modelId: String
         let language: String
+        let speakingRate: Double
         let audioConfig: AudioConfig
     }
 

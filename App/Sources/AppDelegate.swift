@@ -29,6 +29,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 environment.viewModel.status == .idle
             }
             navigation?.pushViewController(picker, animated: true)
+        } openSpeedSettings: { [weak navigation] in
+            let speed = SpeechSpeedViewController(preference: environment.speechSpeed)
+            navigation?.pushViewController(speed, animated: true)
         }
         navigation.viewControllers = [translation]
         navigation.navigationBar.prefersLargeTitles = false

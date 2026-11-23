@@ -9,6 +9,7 @@ final class TranslationViewController: UIViewController {
     private let viewModel: TranslationViewModel
     private let openAPIKeySettings: () -> Void
     private let openVoiceSettings: () -> Void
+    private let openSpeedSettings: () -> Void
 
     private let statusView = ConnectionStatusView()
     private let levelMeter = LevelMeterView()
@@ -30,10 +31,16 @@ final class TranslationViewController: UIViewController {
     /// scrolls up to read earlier ones.
     private var followsLatest = true
 
-    init(viewModel: TranslationViewModel, openAPIKeySettings: @escaping () -> Void, openVoiceSettings: @escaping () -> Void) {
+    init(
+        viewModel: TranslationViewModel,
+        openAPIKeySettings: @escaping () -> Void,
+        openVoiceSettings: @escaping () -> Void,
+        openSpeedSettings: @escaping () -> Void
+    ) {
         self.viewModel = viewModel
         self.openAPIKeySettings = openAPIKeySettings
         self.openVoiceSettings = openVoiceSettings
+        self.openSpeedSettings = openSpeedSettings
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -80,13 +87,16 @@ final class TranslationViewController: UIViewController {
         let voice = UIAction(title: String(localized: "Voice"), image: UIImage(systemName: "waveform")) { [weak self] _ in
             self?.openVoiceSettings()
         }
+        let speed = UIAction(title: String(localized: "Speed"), image: UIImage(systemName: "speedometer")) { [weak self] _ in
+            self?.openSpeedSettings()
+        }
         let conversation = UIMenu(options: .displayInline, children: [newConversation, load, save])
         let copy = UIMenu(options: .displayInline, children: [
             copyAction(.original, title: String(localized: "Copy Original"), icon: "text.quote"),
             copyAction(.translation, title: String(localized: "Copy Translation"), icon: "doc.on.doc"),
             copyAction(.both, title: String(localized: "Copy Both"), icon: "doc.on.clipboard"),
         ])
-        let settings = UIMenu(options: .displayInline, children: [apiKey, voice])
+        let settings = UIMenu(options: .displayInline, children: [apiKey, voice, speed])
         let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), menu: UIMenu(children: [conversation, copy, settings]))
         more.preferredMenuElementOrder = .fixed
         more.accessibilityLabel = String(localized: "More")

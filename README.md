@@ -171,6 +171,9 @@ Off by default; the setting is remembered. When it is on:
   so speech uses the loudspeaker when there's no headset route. Audio
   streams from `/tts/v1/voice:stream` as raw 24 kHz PCM and starts playing
   with the first chunk.
+- **Speed.** **⋯ → Speed** sets how fast translations are spoken, from 0.5×
+  to 1.5×. The default is 1× and the choice is remembered. A change applies
+  to the next phrase spoken.
 - **Voice and cost.** **⋯ → Voice** opens the Inworld voice catalog. The app
   remembers your selection and defaults to Ashley. You can preview voices
   while listening is stopped. Synthesis uses `inworld-tts-2-flash` with the
@@ -270,8 +273,9 @@ The summary adds:
 
 With `--speak` it also turns each translation into speech, without playing
 it. It reports characters, TTS cost, request → first audio latency, and
-whether anything was spoken out of order. Clips wait while speech "plays",
-as people would, so the run takes longer.
+whether anything was spoken out of order. `--speaking-rate 0.5` to `1.5`
+sets how fast that speech is generated (default 1×). Clips wait while speech
+"plays", as people would, so the run takes longer.
 
 ```sh
 cd Packages/TranslatorCore && swift build -c release --product translator-cli
@@ -283,8 +287,8 @@ INWORLD_API_KEY=... $BIN tools/samples/manifest.json --report tools/reports/live
 # Five languages back to back in one session, at real time:
 INWORLD_API_KEY=... $BIN tools/samples/manifest.json --only es-name-time,ja-phone,en-assistant-request,fr-injection,de-appointment
 
-# Spoken English too:
-INWORLD_API_KEY=... $BIN tools/samples/manifest.json --only es-name-time,ja-phone,fr-injection --speak
+# Spoken English too, at 1.25× speed:
+INWORLD_API_KEY=... $BIN tools/samples/manifest.json --only es-name-time,ja-phone,fr-injection --speak --speaking-rate 1.25
 
 # Against the mock, with a forced disconnect every 7 s:
 INWORLD_API_KEY=mock-api-key $BIN tools/samples/manifest.json \
