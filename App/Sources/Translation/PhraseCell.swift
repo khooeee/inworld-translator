@@ -5,10 +5,12 @@ import UIKit
 final class PhraseCell: UITableViewCell {
     static let reuseIdentifier = "PhraseCell"
 
-    private let speakingIndicator = UIView()
     private let headerLabel = UILabel()
     private let sourceLabel = UILabel()
     private let translationLabel = UILabel()
+    private let sourceBubble = SpeechBubbleView(tail: .leading, fill: TranslationTheme.original)
+    private let translationBubble = SpeechBubbleView(tail: .trailing, fill: TranslationTheme.translated)
+    private let translationRow = UIStackView()
 
     /// Copy actions for VoiceOver, which has no long-press menu.
     var onCopy: ((String) -> Void)?
@@ -16,33 +18,28 @@ final class PhraseCell: UITableViewCell {
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
-
-        speakingIndicator.backgroundColor = .systemBlue
-        speakingIndicator.isHidden = true
-        speakingIndicator.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(speakingIndicator)
+        backgroundColor = .clear
 
         for label in [headerLabel, sourceLabel, translationLabel] {
             label.numberOfLines = 0
             label.adjustsFontForContentSizeCategory = true
             label.textAlignment = .natural
         }
-        headerLabel.font = .preferredFont(forTextStyle: .caption1)
-        headerLabel.textColor = .secondaryLabel
+        headerLabel.font = Self.font(.caption1, weight: .semibold)
+        headerLabel.textColor = TranslationTheme.secondaryText
 
-        let stack = UIStackView(arrangedSubviews: [headerLabel, sourceLabel, translationLabel])
+        let sourceRow = UIStackView()
+        configureBubble(sourceBubble, label: sourceLabel, row: sourceRow, leading: 0, trailing: 26)
+        configureBubble(translationBubble, label: translationLabel, row: translationRow, leading: 26, trailing: 0)
+
+        let stack = UIStackView(arrangedSubviews: [headerLabel, sourceRow, translationRow])
         stack.axis = .vertical
-        stack.spacing = 4
-        stack.setCustomSpacing(6, after: sourceLabel)
+        stack.spacing = 3
         stack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(stack)
         NSLayoutConstraint.activate([
-            speakingIndicator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            speakingIndicator.topAnchor.constraint(equalTo: contentView.topAnchor),
-            speakingIndicator.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            speakingIndicator.widthAnchor.constraint(equalToConstant: 3),
-            stack.topAnchor.constraint(equalTo: contentView.layoutMarginsGuide.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: contentView.layoutMarginsGuide.bottomAnchor),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
             stack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
         ])
@@ -55,10 +52,29 @@ final class PhraseCell: UITableViewCell {
         fatalError("init(coder:) is not supported")
     }
 
-    func configure(with phrase: Phrase, isSpeaking: Bool = false) {
-        contentView.backgroundColor = isSpeaking ? .systemBlue.withAlphaComponent(0.14) : .clear
-        speakingIndicator.isHidden = !isSpeaking
+    private func configureBubble(
+        _ bubble: SpeechBubbleView, label: UILabel, row: UIStackView, leading: CGFloat, trailing: CGFloat
+    ) {
+        row.axis = .vertical
+        row.isLayoutMarginsRelativeArrangement = true
+        row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: leading, bottom: 0, trailing: trailing)
+        row.addArrangedSubview(bubble)
+        bubble.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 11, leading: 20, bottom: 17, trailing: 20)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        bubble.addSubview(label)
+        let margins = bubble.layoutMarginsGuide
+        let bottom = label.bottomAnchor.constraint(equalTo: margins.bottomAnchor)
+        // A hidden arranged row collapses to zero height.
+        bottom.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
+            label.topAnchor.constraint(equalTo: margins.topAnchor),
+            bottom,
+        ])
+    }
 
+    func configure(with phrase: Phrase, isSpeaking: Bool = false) {
         let spokenInTargetLanguage = phrase.isSpokenInTargetLanguage
         let targetName = phrase.targetLanguage.name()
         let outsideLanguagePair = phrase.translation == .unavailable(.outsideLanguagePair)
@@ -80,38 +96,40 @@ final class PhraseCell: UITableViewCell {
         }
         headerLabel.text = header.joined(separator: " · ")
         headerLabel.isHidden = header.isEmpty
+        headerLabel.textColor = isSpeaking ? TranslationTheme.accent : TranslationTheme.secondaryText
+        translationBubble.strokeColor = isSpeaking ? TranslationTheme.accent : TranslationTheme.outline
 
         // The source appears at full strength when it is the caption itself.
         sourceLabel.text = phrase.sourceText
         switch phrase.sourceState {
         case .provisional:
             sourceLabel.font = Self.font(.body, italic: true)
-            sourceLabel.textColor = .tertiaryLabel
+            sourceLabel.textColor = TranslationTheme.secondaryText
         case .final, .interrupted:
             sourceLabel.font = Self.font(showsOnlySource ? .title3 : .body, weight: showsOnlySource ? .semibold : .regular)
-            sourceLabel.textColor = showsOnlySource ? .label : .secondaryLabel
+            sourceLabel.textColor = showsOnlySource ? .label : TranslationTheme.secondaryText
         }
 
         // Translation.
         translationLabel.font = Self.font(.title3, weight: .semibold)
-        translationLabel.isHidden = showsOnlySource
+        translationRow.isHidden = showsOnlySource
         switch phrase.translation {
         case .none:
-            translationLabel.isHidden = true
+            translationRow.isHidden = true
         case .pending:
             translationLabel.text = String(localized: "Translating…")
             translationLabel.font = Self.font(.body, italic: true)
-            translationLabel.textColor = .tertiaryLabel
+            translationLabel.textColor = TranslationTheme.secondaryText
         case .partial(let text):
             translationLabel.text = text
-            translationLabel.textColor = .secondaryLabel
+            translationLabel.textColor = TranslationTheme.secondaryText
         case .completed(let text):
             translationLabel.text = text
-            translationLabel.textColor = .label
+            translationLabel.textColor = TranslationTheme.accent
         case .unavailable(let reason):
             translationLabel.text = Self.describe(reason)
             translationLabel.font = Self.font(.subheadline, italic: true)
-            translationLabel.textColor = .secondaryLabel
+            translationLabel.textColor = TranslationTheme.secondaryText
         }
 
         updateAccessibility(for: phrase, isSpeaking: isSpeaking)
@@ -130,7 +148,7 @@ final class PhraseCell: UITableViewCell {
             append(language)
         }
         append(phrase.sourceText, language: phrase.languageCode == "und" ? nil : phrase.languageCode)
-        if !translationLabel.isHidden, let translation = translationLabel.text {
+        if !translationRow.isHidden, let translation = translationLabel.text {
             switch phrase.translation {
             case .partial, .completed:
                 append(phrase.targetLanguage.name())
@@ -188,6 +206,7 @@ final class PhraseCell: UITableViewCell {
         if italic, let slanted = descriptor.withSymbolicTraits(descriptor.symbolicTraits.union(.traitItalic)) {
             descriptor = slanted
         }
-        return UIFontMetrics(forTextStyle: style).scaledFont(for: UIFont(descriptor: descriptor, size: base.pointSize))
+        let font = UIFont(descriptor: descriptor, size: base.pointSize)
+        return UIFontMetrics(forTextStyle: style).scaledFont(for: weight == .semibold ? TranslationTheme.rounded(font) : font)
     }
 }

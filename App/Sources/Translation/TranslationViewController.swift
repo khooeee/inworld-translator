@@ -17,7 +17,7 @@ final class TranslationViewController: UIViewController {
     let targetButton = UIButton(configuration: .tinted())
     let bidirectionalButton = UIButton(configuration: .gray())
     let tableView = UITableView(frame: .zero, style: .plain)
-    let emptyLabel = UILabel()
+    let emptyView = TranslationEmptyView()
     let noticeView = NoticeView()
     let jumpButton = UIButton(configuration: .filled())
     let startButton = UIButton(configuration: .filled())
@@ -54,7 +54,7 @@ final class TranslationViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "Translator")
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = TranslationTheme.canvas
         configureNavigationItems()
         configureHeader()
         configureTable()

@@ -11,6 +11,7 @@ final class ConnectionStatusView: UIView {
         dot.layer.cornerRadius = 5
         dot.translatesAutoresizingMaskIntoConstraints = false
         label.font = .preferredFont(forTextStyle: .subheadline)
+        label.textColor = TranslationTheme.secondaryText
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 0
 
@@ -48,7 +49,7 @@ final class ConnectionStatusView: UIView {
 
     static func describe(_ status: SessionStatus, speaking: Bool = false) -> (String, UIColor) {
         if speaking, status == .listening {
-            return (String(localized: "Speaking translation"), .systemBlue)
+            return (String(localized: "Speaking translation"), TranslationTheme.accent)
         }
         return switch status {
         case .idle: (String(localized: "Ready"), .systemGray)

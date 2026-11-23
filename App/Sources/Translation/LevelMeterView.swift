@@ -9,10 +9,10 @@ final class LevelMeterView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = .tertiarySystemFill
+        backgroundColor = TranslationTheme.outline
         layer.cornerRadius = 3
         clipsToBounds = true
-        fill.backgroundColor = .systemGreen
+        fill.backgroundColor = TranslationTheme.accent
         fill.translatesAutoresizingMaskIntoConstraints = false
         addSubview(fill)
         fillWidth = fill.widthAnchor.constraint(equalToConstant: 0)
