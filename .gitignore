@@ -8,6 +8,7 @@ App/Config/Local.xcconfig
 xcuserdata/
 DerivedData/
 .build/
+build/
 .swiftpm/
 *.xcresult
 
