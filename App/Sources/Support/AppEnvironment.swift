@@ -18,6 +18,7 @@ struct AppEnvironment {
     let baseURL: URL
     let client: InworldClient
     let speechVoice: SpeechVoicePreference
+    let speechSpeed: SpeechSpeedPreference
     let viewModel: TranslationViewModel
     let autoStart: Bool
 
@@ -36,8 +37,15 @@ struct AppEnvironment {
         let apiKey: @Sendable () async -> String? = { keyOverride ?? keyStore.load() }
 
         let speechVoice = SpeechVoicePreference(defaults: defaults)
+        let speechSpeed = SpeechSpeedPreference(defaults: defaults)
         self.speechVoice = speechVoice
-        client = InworldClient(configuration: .init(baseURL: baseURL), selectedVoiceID: { await speechVoice.id }, apiKey: apiKey)
+        self.speechSpeed = speechSpeed
+        client = InworldClient(
+            configuration: .init(baseURL: baseURL),
+            selectedVoiceID: { await speechVoice.id },
+            selectedSpeakingRate: { await speechSpeed.rate },
+            apiKey: apiKey
+        )
         let audio: any AudioCapturing & SpeechPlaying = Self.sampleAudio(overrides) ?? MicrophoneCapture()
         let session = TranslationSession(
             audio: audio,
@@ -80,5 +88,25 @@ struct SpeechVoicePreference {
 
     func select(_ id: InworldClient.Voice.ID) {
         defaults.set(id, forKey: Self.key)
+    }
+}
+
+/// How fast spoken translations are read.
+@MainActor
+struct SpeechSpeedPreference {
+    let defaults: UserDefaults
+    private static let key = "SpokenTranslationSpeed"
+    private static let range = InworldClient.Configuration.speakingRateRange
+
+    var rate: Double {
+        let stored = (defaults.object(forKey: Self.key) as? NSNumber)?.doubleValue
+            ?? InworldClient.Configuration.defaultSpeakingRate
+        guard stored.isFinite else { return InworldClient.Configuration.defaultSpeakingRate }
+        return min(max(stored, Self.range.lowerBound), Self.range.upperBound)
+    }
+
+    func select(_ rate: Double) {
+        guard rate.isFinite else { return }
+        defaults.set(min(max(rate, Self.range.lowerBound), Self.range.upperBound), forKey: Self.key)
     }
 }

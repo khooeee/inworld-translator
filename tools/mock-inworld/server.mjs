@@ -185,6 +185,10 @@ export async function startMockInworld({
     if (!text || !body.voiceId || !body.modelId) {
       return json(res, 400, { code: 3, message: 'text, voiceId and modelId are required', details: [] });
     }
+    const speakingRate = body.audioConfig?.speakingRate ?? 1;
+    if (typeof speakingRate !== 'number' || speakingRate < 0.5 || speakingRate > 1.5) {
+      return json(res, 400, { code: 3, message: 'speakingRate must be between 0.5 and 1.5', details: [] });
+    }
     if (faults.failSpeech > 0) {
       faults.failSpeech -= 1;
       return json(res, faults.speechStatus, { code: 13, message: 'injected failure', details: [] });
@@ -192,7 +196,8 @@ export async function startMockInworld({
     stats.speechCharacters += text.length;
 
     const rate = body.audioConfig?.sampleRateHertz ?? 24000;
-    const samples = Math.round((Math.max(300, text.length * speechMsPerCharacter) / 1000) * rate);
+    const spokenMs = Math.max(300, (text.length * speechMsPerCharacter) / speakingRate);
+    const samples = Math.round((spokenMs / 1000) * rate);
     const chunkSamples = rate / 10;
     const chunks = Math.ceil(samples / chunkSamples);
     const breakAt = faults.breakSpeech > 0 ? Math.ceil(chunks / 2) : -1;

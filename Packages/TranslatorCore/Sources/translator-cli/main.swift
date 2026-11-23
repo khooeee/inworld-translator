@@ -17,6 +17,7 @@
 //                       TTS (not played out loud) and report how long the
 //                       audio takes to start. Clips wait while speech "plays",
 //                       so the run takes longer.
+//   --speaking-rate X   speed of spoken translations, 0.5–1.5 (default 1)
 //   --report PATH       also write the report as JSON
 //   --stt-price X       USD per hour of audio (default 0.15, On-Demand)
 //   --input-price X     USD per million input tokens (default 0.10)
@@ -36,6 +37,7 @@ struct Options {
     var dropEvery: Double?
     var model: String?
     var speak = false
+    var speakingRate = 1.0
     var report: URL?
     var sttPricePerHour = 0.15
     var inputPricePerMillion = 0.10
@@ -63,13 +65,14 @@ struct Options {
             case "--drop-every": options.dropEvery = number(argument)
             case "--model": options.model = value(argument)
             case "--speak": options.speak = true
+            case "--speaking-rate": options.speakingRate = number(argument)
             case "--report": options.report = URL(fileURLWithPath: value(argument))
             case "--stt-price": options.sttPricePerHour = number(argument)
             case "--input-price": options.inputPricePerMillion = number(argument)
             case "--output-price": options.outputPricePerMillion = number(argument)
             case "--tts-price": options.ttsPricePerMillion = number(argument)
             case "-h", "--help":
-                print("usage: translator-cli MANIFEST [--base-url URL] [--speed X] [--loops N] [--only ids] [--drop-every S] [--model ID] [--speak] [--report PATH]")
+                print("usage: translator-cli MANIFEST [--base-url URL] [--speed X] [--loops N] [--only ids] [--drop-every S] [--model ID] [--speak] [--speaking-rate X] [--report PATH]")
                 exit(0)
             default:
                 if argument.hasPrefix("-") { fail("unknown option \(argument)") }
@@ -77,6 +80,10 @@ struct Options {
             }
         }
         guard let manifest else { fail("give the path to a samples manifest") }
+        let range = InworldClient.Configuration.speakingRateRange
+        guard range.contains(options.speakingRate) else {
+            fail("--speaking-rate must be between \(range.lowerBound) and \(range.upperBound)")
+        }
         options.manifest = manifest
         return options
     }
@@ -127,7 +134,8 @@ let samplesByID = Dictionary(manifest.samples.map { ($0.id, $0) }, uniquingKeysW
 
 var clientConfiguration = InworldClient.Configuration(baseURL: options.baseURL)
 if let model = options.model { clientConfiguration.translationModel = model }
-let client = InworldClient(configuration: clientConfiguration) { apiKey }
+let speakingRate = options.speakingRate
+let client = InworldClient(configuration: clientConfiguration, selectedSpeakingRate: { speakingRate }) { apiKey }
 let translator = MeteredTranslator(client)
 let synthesizer = MeteredSynthesizer(client)
 let audio = PCMFileAudioSource(playlist: clips, speed: options.speed)
@@ -389,6 +397,7 @@ print("Integrity: \(integrityProblems == 0 ? "ok" : "PROBLEMS") — new phrases 
 if options.speak {
     print("Speech: \(collector.spoken.count) phrases spoken, \(speech.requests) requests (\(speech.failures) failed), \(speech.characters) characters, " + String(format: "%.0fs of audio", audio.speechSeconds))
     print("Speech request → first audio: p50 \(ms(percentile(speech.firstAudio, 0.5))), p95 \(ms(percentile(speech.firstAudio, 0.95)))")
+    print("Speech speed: \(options.speakingRate)×")
 }
 print(String(format: "Audio streamed: %.0fs; session wall time: %.0fs", audioSeconds, elapsed))
 print("Translation requests: \(usage.requests), tokens in/out: \(usage.prompt)/\(usage.completion), models: \(usage.models.map { "\($0.key) ×\($0.value)" }.sorted().joined(separator: ", "))")
@@ -410,6 +419,7 @@ if let reportURL = options.report {
         let integrityProblems: Int
         let phrasesSpoken: Int
         let speechCharacters: Int
+        let speakingRate: Double
         let speechFirstAudioP50: Double?
         let speechFirstAudioP95: Double?
         let audioSeconds: Double
@@ -425,6 +435,7 @@ if let reportURL = options.report {
         speechToCaptionP50: percentile(speechToCaption, 0.5), speechToCaptionP95: percentile(speechToCaption, 0.95),
         reconnects: reconnects, integrityProblems: integrityProblems,
         phrasesSpoken: collector.spoken.count, speechCharacters: speech.characters,
+        speakingRate: options.speakingRate,
         speechFirstAudioP50: percentile(speech.firstAudio, 0.5), speechFirstAudioP95: percentile(speech.firstAudio, 0.95),
         audioSeconds: audioSeconds,
         promptTokens: usage.prompt, completionTokens: usage.completion,
