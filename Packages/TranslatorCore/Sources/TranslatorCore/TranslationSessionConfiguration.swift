@@ -2,7 +2,12 @@ import Foundation
 
 extension TranslationSession {
     public struct Configuration: Sendable {
-        public var stt = STTConfiguration()
+        /// Let short hesitations pass before committing a turn for translation.
+        public var stt = STTConfiguration(
+            endOfTurnConfidenceThreshold: 0.7,
+            minEndOfTurnSilenceMilliseconds: 384,
+            maxTurnSilenceMilliseconds: 1152
+        )
         /// Audio kept while disconnected, to send once reconnected. Older
         /// audio is dropped first. 256,000 bytes is 8 seconds.
         public var maxPendingAudioBytes = 256_000

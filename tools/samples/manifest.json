@@ -32,6 +32,7 @@
     { "id": "en-in-invoice", "language": "en", "voice": "Rishi", "text": "The invoice number is four seven two nine, and it is due on the twenty first.", "english": "The invoice number is 4729, and it is due on the 21st." },
     { "id": "es-name-time-noisy", "language": "es", "voice": "Mónica", "variant": "noise", "text": "Hola, me llamo Carlos Rodríguez y mi vuelo sale a las siete y cuarenta y cinco de la mañana.", "english": "Hello, my name is Carlos Rodríguez and my flight leaves at 7:45 in the morning." },
     { "id": "ja-phone-noisy", "language": "ja", "voice": "Kyoko", "variant": "noise", "text": "佐藤さんの電話番号は、ゼロキューゼロ、イチニーサンヨン、ゴーロクナナハチです。", "english": "Mr. Sato's phone number is 090-1234-5678." },
-    { "id": "de-appointment-fast", "language": "de", "voice": "Anna", "variant": "fast", "text": "Der Termin bei Doktor Müller ist am dritten März um vierzehn Uhr dreißig.", "english": "The appointment with Dr. Müller is on March 3rd at 2:30 PM." }
+    { "id": "de-appointment-fast", "language": "de", "voice": "Anna", "variant": "fast", "text": "Der Termin bei Doktor Müller ist am dritten März um vierzehn Uhr dreißig.", "english": "The appointment with Dr. Müller is on March 3rd at 2:30 PM." },
+    { "id": "es-flight-hesitation", "language": "es", "voice": "Mónica", "text": "Mi vuelo sale a las siete y cuarenta y cinco de la mañana.", "speech": "Mi vuelo sale a las [[slnc 550]] siete y cuarenta y cinco de la mañana.", "english": "My flight leaves at 7:45 in the morning." }
   ]
 }
