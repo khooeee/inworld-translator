@@ -67,11 +67,11 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
     /// The longest text one streaming TTS request accepts, in UTF-16 units.
     static let maxSpeechLength = 4000
 
-    private let configuration: Configuration
-    private let selectedVoiceID: @Sendable () async -> String?
-    private let selectedSpeakingRate: @Sendable () async -> Double
-    private let apiKey: @Sendable () async -> String?
-    private let session: URLSession
+    let configuration: Configuration
+    let selectedVoiceID: @Sendable () async -> String?
+    let selectedSpeakingRate: @Sendable () async -> Double
+    let apiKey: @Sendable () async -> String?
+    let session: URLSession
 
     public init(
         configuration: Configuration = Configuration(),
@@ -95,7 +95,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
     }
 
     /// The Portal's Base64 credential, used as-is: it is already encoded.
-    private func authorization() async throws -> String {
+    func authorization() async throws -> String {
         guard let key = await apiKey()?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else {
             throw ServiceError.notConfigured
         }
@@ -128,7 +128,7 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         }
     }
 
-    private func runTranslation(
+    func runTranslation(
         _ translation: TranslationRequest,
         yield: @Sendable (TranslationUpdate) -> Void
     ) async throws {
@@ -183,242 +183,5 @@ public struct InworldClient: CredentialProviding, Translating, SpeechSynthesizin
         }
         // A stream that stops without [DONE] is a failed request.
         throw ServiceError.invalidResponse
-    }
-
-    // MARK: Voices
-
-    public func listVoices() async throws -> [Voice] {
-        var voices: [Voice.ID: Voice] = [:]
-        var nextPage: String?
-        var seenPageTokens: Set<String> = []
-        let authorization = try await authorization()
-        repeat {
-            try Task.checkCancellation()
-            var query = [URLQueryItem(name: "pageSize", value: "100")]
-            if let nextPage { query.append(URLQueryItem(name: "pageToken", value: nextPage)) }
-            let data = try await voiceData(path: "/voices/v1/voices", query: query, authorization: authorization)
-            let page = try JSONDecoder().decode(VoicePage.self, from: data)
-            for voice in page.voices ?? [] { voices[voice.id] = voice }
-            nextPage = page.nextPageToken.flatMap { $0.isEmpty ? nil : $0 }
-            if let nextPage, !seenPageTokens.insert(nextPage).inserted { throw ServiceError.invalidResponse }
-        } while nextPage != nil
-        return voices.values.sorted {
-            let order = $0.name.localizedStandardCompare($1.name)
-            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
-        }
-    }
-
-    public func voicePreview(id: Voice.ID) async throws -> Data {
-        let authorization = try await authorization()
-        let data = try await voiceData(path: "/tts/v1/voice:preview", query: [
-            URLQueryItem(name: "voice_id", value: id),
-            URLQueryItem(name: "model_id", value: configuration.ttsModel),
-        ], authorization: authorization)
-        let preview = try JSONDecoder().decode(VoicePreview.self, from: data)
-        guard !preview.audioContent.isEmpty else { throw ServiceError.invalidResponse }
-        return preview.audioContent
-    }
-
-    private func voiceData(path: String, query: [URLQueryItem], authorization: String) async throws -> Data {
-        guard var components = URLComponents(url: configuration.baseURL, resolvingAgainstBaseURL: false) else {
-            throw ServiceError.invalidResponse
-        }
-        components.path = components.path.trimmingSuffix("/") + path
-        components.queryItems = query
-        // Preserve plus signs in opaque page tokens for form-style query decoders.
-        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
-        guard let url = components.url else { throw ServiceError.invalidResponse }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-        request.setValue(authorization, forHTTPHeaderField: "Authorization")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw ServiceError.invalidResponse }
-        guard http.statusCode == 200 else { throw Self.error(for: http) }
-        return data
-    }
-
-    // MARK: SpeechSynthesizing
-
-    public func synthesize(_ text: String, language: TargetLanguage) -> AsyncThrowingStream<Data, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    try await self.runSynthesis(text, language: language) { continuation.yield($0) }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: Self.normalize(error))
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
-
-    private func runSynthesis(_ text: String, language: TargetLanguage, yield: @Sendable (Data) -> Void) async throws {
-        var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        while text.utf16.count > Self.maxSpeechLength {
-            text.removeLast()
-        }
-        guard !text.isEmpty else { return }
-
-        let voiceID = await selectedVoiceID() ?? configuration.ttsVoice
-        let speakingRate = Self.clampedSpeakingRate(await selectedSpeakingRate())
-        var request = URLRequest(url: configuration.ttsStreamURL)
-        request.httpMethod = "POST"
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue(try await authorization(), forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(
-            SpeechRequest(
-                text: text,
-                voiceId: voiceID,
-                modelId: configuration.ttsModel,
-                language: language.rawValue,
-                // PCM is headerless; LINEAR16 would put a WAV header on every chunk.
-                audioConfig: .init(
-                    audioEncoding: "PCM",
-                    sampleRateHertz: SpeechAudio.sampleRate,
-                    // The service takes the speed inside audioConfig, not on the request.
-                    speakingRate: speakingRate
-                )
-            )
-        )
-
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else { throw ServiceError.invalidResponse }
-        guard http.statusCode == 200 else { throw Self.error(for: http) }
-
-        // One JSON object per line, each with a piece of the audio.
-        let decoder = JSONDecoder()
-        for try await line in bytes.lines {
-            guard let chunk = try? decoder.decode(SpeechChunk.self, from: Data(line.utf8)) else { continue }
-            // Failures after the response has started arrive in-band.
-            if let error = chunk.error { throw Self.error(forStatusCode: error.code) }
-            if let audio = chunk.result?.audioContent.flatMap({ Data(base64Encoded: $0) }), !audio.isEmpty {
-                yield(audio)
-            }
-        }
-    }
-
-    /// Keeps a requested speed inside the range the service accepts.
-    static func clampedSpeakingRate(_ rate: Double) -> Double {
-        guard rate.isFinite else { return Configuration.defaultSpeakingRate }
-        return min(max(rate, Configuration.speakingRateRange.lowerBound), Configuration.speakingRateRange.upperBound)
-    }
-
-    /// Maps an in-band error's gRPC status code.
-    private static func error(forStatusCode code: Int?) -> ServiceError {
-        switch code {
-        case 7, 16: .unauthorized // PERMISSION_DENIED, UNAUTHENTICATED
-        case 8: .rateLimited(retryAfter: nil) // RESOURCE_EXHAUSTED
-        default: .server(status: 502)
-        }
-    }
-
-    private static func error(for response: HTTPURLResponse) -> ServiceError {
-        switch response.statusCode {
-        case 401, 403:
-            return .unauthorized
-        case 402:
-            return .quotaExceeded
-        case 429:
-            return .rateLimited(retryAfter: response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init))
-        default:
-            return .server(status: response.statusCode)
-        }
-    }
-
-    private static func normalize(_ error: Error) -> Error {
-        if error is ServiceError || error is CancellationError { return error }
-        if let urlError = error as? URLError, urlError.code == .cancelled { return CancellationError() }
-        return ServiceError.transport
-    }
-
-    // MARK: Wire types
-
-    private struct VoicePage: Decodable {
-        let voices: [Voice]?
-        let nextPageToken: String?
-    }
-
-    private struct VoicePreview: Decodable {
-        let audioContent: Data
-    }
-
-    private struct ChatRequest: Encodable {
-        let model: String
-        let models: [String]?
-        let messages: [TranslationPrompt.Message]
-        let stream: Bool
-        let temperature: Double
-        let maxTokens: Int
-
-        enum CodingKeys: String, CodingKey {
-            case model, models, messages, stream, temperature
-            case maxTokens = "max_tokens"
-        }
-    }
-
-    private struct ChatChunk: Decodable {
-        struct Choice: Decodable {
-            struct Delta: Decodable {
-                let content: String?
-            }
-
-            let delta: Delta?
-        }
-
-        struct Usage: Decodable {
-            let promptTokens: Int?
-            let completionTokens: Int?
-
-            enum CodingKeys: String, CodingKey {
-                case promptTokens = "prompt_tokens"
-                case completionTokens = "completion_tokens"
-            }
-        }
-
-        struct ErrorPayload: Decodable {
-            let message: String?
-        }
-
-        let model: String?
-        let choices: [Choice]?
-        let usage: Usage?
-        let error: ErrorPayload?
-    }
-
-    private struct SpeechRequest: Encodable {
-        struct AudioConfig: Encodable {
-            let audioEncoding: String
-            let sampleRateHertz: Int
-            let speakingRate: Double
-        }
-
-        let text: String
-        let voiceId: String
-        let modelId: String
-        let language: String
-        let audioConfig: AudioConfig
-    }
-
-    private struct SpeechChunk: Decodable {
-        struct Result: Decodable {
-            let audioContent: String?
-        }
-
-        struct ErrorPayload: Decodable {
-            let code: Int?
-            let message: String?
-        }
-
-        let result: Result?
-        let error: ErrorPayload?
-    }
-}
-
-private extension String {
-    func trimmingSuffix(_ suffix: String) -> String {
-        var result = self
-        while result.hasSuffix(suffix) { result.removeLast(suffix.count) }
-        return result
     }
 }
