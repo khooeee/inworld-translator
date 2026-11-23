@@ -193,6 +193,9 @@ final class VoicePickerViewController: UITableViewController, UISearchResultsUpd
         preference.select(visibleVoices[indexPath.row].id)
         tableView.deselectRow(at: indexPath, animated: true)
         renderCatalog()
+        if !visibleVoices.isEmpty {
+            tableView.scrollToRow(at: IndexPath(row: 0, section: 0), at: .top, animated: true)
+        }
     }
 
     private func togglePreview(of voice: Voice) {
