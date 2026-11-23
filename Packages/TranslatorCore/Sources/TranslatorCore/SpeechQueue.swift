@@ -40,6 +40,9 @@ public final class SpeechQueue: Sendable {
         var reportedWaitingCount = 0
         var current: (id: PhraseID, task: Task<Void, Never>)?
         var floorTaken = false
+        /// The next waiting phrase's audio, requested while the current
+        /// phrase plays so it starts the moment that one ends.
+        var prefetch: (id: PhraseID, stream: AsyncThrowingStream<Data, Error>)?
     }
 
     private let synthesizer: any SpeechSynthesizing
@@ -64,6 +67,8 @@ public final class SpeechQueue: Sendable {
             state.waiting.append(Item(id: id, text: text, language: language))
             if state.waiting.count > configuration.maxWaiting {
                 state.waiting.removeFirst(state.waiting.count - configuration.maxWaiting)
+                // The oldest waiting phrase goes first, taking any lookahead with it.
+                state.prefetch = nil
             }
             startNext(&state)
         }
@@ -78,7 +83,8 @@ public final class SpeechQueue: Sendable {
         }
     }
 
-    /// Discards translations that have yet to start playing.
+    /// Discards translations that have yet to start playing, including audio
+    /// requested ahead for them.
     public func clearWaiting() {
         state.withLock { state in clearWaiting(&state) }
     }
@@ -105,6 +111,9 @@ public final class SpeechQueue: Sendable {
 
     private func clearWaiting(_ state: inout State) {
         state.waiting.removeAll()
+        // Dropping the stream stops its request; at worst one phrase's audio
+        // nobody hears finishes downloading.
+        state.prefetch = nil
         reportWaitingCount(&state)
     }
 
@@ -120,20 +129,37 @@ public final class SpeechQueue: Sendable {
     /// One phrase at a time: the next starts when the current one finishes,
     /// so a stopping phrase never overlaps the one after it.
     private func startNext(_ state: inout State) {
-        defer { reportWaitingCount(&state) }
+        defer {
+            reportWaitingCount(&state)
+            maybePrefetch(&state)
+        }
         guard state.current == nil, !state.floorTaken, !state.waiting.isEmpty else { return }
         let item = state.waiting.removeFirst()
+        // The lookahead is always for the phrase at the front of the queue.
+        let stream = state.prefetch?.id == item.id ? state.prefetch?.stream : nil
+        state.prefetch = nil
         let task = Task {
-            await self.speak(item)
+            await self.speak(item, stream: stream)
             self.finished(item.id)
         }
         state.current = (item.id, task)
         continuation.yield(.speaking(item.id))
     }
 
-    private func speak(_ item: Item) async {
+    /// Requests the next waiting phrase's audio while the current one plays,
+    /// so back-to-back phrases start without waiting for the network. Only
+    /// one phrase is ever prepared: anything further out may be cleared
+    /// first. Creating the stream starts its request; playing it later
+    /// replays whatever has arrived, with failures surfacing then, as before.
+    private func maybePrefetch(_ state: inout State) {
+        guard state.current != nil, let next = state.waiting.first else { return }
+        guard state.prefetch?.id != next.id else { return }
+        state.prefetch = (next.id, synthesizer.synthesize(next.text, language: next.language))
+    }
+
+    private func speak(_ item: Item, stream: AsyncThrowingStream<Data, Error>?) async {
         do {
-            try await player.play(synthesizer.synthesize(item.text, language: item.language))
+            try await player.play(stream ?? synthesizer.synthesize(item.text, language: item.language))
         } catch {
             guard !Task.isCancelled, !(error is CancellationError) else { return }
             continuation.yield(.failed(error as? ServiceError))
