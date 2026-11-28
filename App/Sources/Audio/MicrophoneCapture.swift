@@ -11,7 +11,7 @@ import TranslatorCore
 /// Recovers by itself from route changes (headphones, Bluetooth, unplugging),
 /// and reports interruptions such as phone calls so the session can pause.
 ///
-/// The microphone stays open with headphones and mutes briefly for loudspeaker playback.
+/// During playback, the microphone stays open on routes that handle echo.
 actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     private static let log = Logger(subsystem: "InworldTranslator", category: "audio")
 
@@ -19,10 +19,13 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
         let id = UUID()
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
+
+        var voiceProcessingEnabled: Bool { engine.inputNode.isVoiceProcessingEnabled }
     }
 
     private let speechFormat = AVAudioFormat(standardFormatWithSampleRate: Double(SpeechAudio.sampleRate), channels: 1)!
     private let gate = SpeechGate()
+    private let speakerVoiceProcessing: Bool
     private var graph: CaptureGraph?
     private var playback: PlaybackTracker?
     private var converter: PCMConverter?
@@ -30,6 +33,10 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     private var events: AsyncStream<AudioCaptureEvent>.Continuation?
     private var observers: [any NSObjectProtocol] = []
     private var isInterrupted = false
+
+    init(speakerVoiceProcessing: Bool = true) {
+        self.speakerVoiceProcessing = speakerVoiceProcessing
+    }
 
     // MARK: AudioCapturing
 
@@ -53,6 +60,13 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
         // A voice preview uses a playback-only session. Create the engine
         // after recording is active so its input node sees the recording route.
         let graph = CaptureGraph()
+        if speakerVoiceProcessing {
+            do {
+                try graph.engine.inputNode.setVoiceProcessingEnabled(true)
+            } catch {
+                Self.log.info("Voice processing unavailable: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         self.graph = graph
 
         // Five seconds of audio at most. If the network falls that far
@@ -99,7 +113,7 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
 
     private func startEngine(_ graph: CaptureGraph) throws {
         let (engine, player) = (graph.engine, graph.player)
-        gate.updateRoute(allowsListening: Self.currentOutputAllowsListening())
+        gate.updateRoute(allowsListening: PlaybackRoute.allowsListening(voiceProcessingEnabled: graph.voiceProcessingEnabled))
         let input = engine.inputNode
         input.removeTap(onBus: 0)
         let format = input.outputFormat(forBus: 0)
@@ -119,7 +133,7 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
         engine.connect(player, to: engine.mainMixerNode, format: speechFormat)
         engine.prepare()
         try engine.start()
-        Self.log.info("Capturing at \(format.sampleRate, privacy: .public) Hz, \(format.channelCount, privacy: .public) ch")
+        Self.log.info("Capturing at \(format.sampleRate, privacy: .public) Hz, \(format.channelCount, privacy: .public) ch, voice processing: \(graph.voiceProcessingEnabled, privacy: .public)")
     }
 
     /// Rebuilds the tap for a new input format and restarts.
@@ -137,24 +151,6 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     }
 
     // MARK: System events
-
-    private static func currentOutputAllowsListening() -> Bool {
-        let route = AVAudioSession.sharedInstance().currentRoute
-        let handsFreeInput = route.inputs.first { $0.portType == .bluetoothHFP }
-        // Every active output must qualify. A generic Bluetooth output can
-        // be a speaker; a processed hands-free route has its own echo handling.
-        return !route.outputs.isEmpty && route.outputs.allSatisfy { output in
-            switch output.portType {
-            case .headphones:
-                return true
-            case .bluetoothHFP:
-                guard let handsFreeInput else { return false }
-                return output.hasHardwareVoiceCallProcessing || handsFreeInput.hasHardwareVoiceCallProcessing
-            default:
-                return false
-            }
-        }
-    }
 
     private func observeSystemEvents(for graph: CaptureGraph) {
         let center = NotificationCenter.default
@@ -174,9 +170,10 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
             Task { await self?.restartEngine(captureID: captureID) }
         })
 
+        let voiceProcessingEnabled = graph.voiceProcessingEnabled
         observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: nil) { [gate] note in
             // Update the gate before any asynchronous engine restart.
-            gate.updateRoute(allowsListening: Self.currentOutputAllowsListening())
+            gate.updateRoute(allowsListening: PlaybackRoute.allowsListening(voiceProcessingEnabled: voiceProcessingEnabled))
             let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt).flatMap(AVAudioSession.RouteChangeReason.init)
             Self.log.info("Audio route changed: \(String(describing: reason?.rawValue), privacy: .public)")
         })
@@ -228,9 +225,13 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
         if playback != nil { cutPlayback() }
         let tracker = PlaybackTracker()
         playback = tracker
-        gate.updateRoute(allowsListening: Self.currentOutputAllowsListening())
+        let listening = PlaybackRoute.allowsListening(voiceProcessingEnabled: graph.voiceProcessingEnabled)
+        gate.updateRoute(allowsListening: listening)
         gate.startPlayback()
+        _ = converter?.takePeak()
+        Self.log.info("Speaking with mic \(listening ? "open" : "muted", privacy: .public), voice processing: \(graph.voiceProcessingEnabled, privacy: .public), \(PlaybackRoute.summary, privacy: .public)")
         defer {
+            Self.log.info("Finished speaking; loudest mic input: \(self.converter?.takePeak() ?? 0, format: .fixed(precision: 3), privacy: .public)")
             if playback === tracker { cutPlayback() }
         }
 

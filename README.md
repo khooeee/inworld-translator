@@ -96,7 +96,7 @@ AVAudioEngine mic ─▶ 16 kHz mono PCM ─▶ TranslationSession (actor)
                                             │  streamed 24 kHz PCM
                                             ▼
                                   AVAudioPlayerNode on the same engine
-                                  (microphone stays open on headphone routes)
+                                  (microphone stays open while echo is cancelled)
 ```
 
 ### Code layout
@@ -158,11 +158,14 @@ Off by default; the setting is remembered. When it is on:
   phrases play without a pause for the network.
 - **Taking turns.** Speech waits while someone is mid-sentence and starts at
   the next pause. A phrase already playing finishes.
-- **Listening during playback.** With wired headphones or a Bluetooth
-  hands-free headset that provides hardware voice processing, captions
-  continue while the phone speaks. On speaker routes, the microphone
-  sends silence through playback and for 300 ms afterward to avoid
-  feeding translations back into the app.
+- **Listening during playback.** Captions continue while the phone speaks,
+  so a reply that starts over a translation is heard from its first word.
+  On the built-in speaker and microphone, Apple's voice processing cancels
+  the phone's own voice. Wired headphones and Bluetooth hands-free headsets
+  with hardware voice processing need no cancellation. On any other route,
+  or if voice processing can't start, the microphone sends silence through
+  playback and for 300 ms afterward to avoid feeding translations back
+  into the app.
 - **Backlog.** Finished translations wait in order for playback. Spoken
   translations can lag behind the captions during fast speech. When five
   or more are waiting, **Jump to Latest** clears the playback backlog.
@@ -257,6 +260,16 @@ xcrun simctl launch booted com.example.Translator \
 Add `-SpeaksTranslations YES` to start with speech on. With sample files,
 speech is timed but not played aloud, and the next clip waits for it.
 
+### Loudspeaker echo cancellation
+
+Debug builds accept `-SpeakerVoiceProcessing NO` to mute the microphone during
+speaker playback instead, as a baseline. At the same speaker volume in both
+runs, let a translation play in a quiet room and count any captions made from
+the phone's own voice. Then start a short reply while a translation plays and
+check how much of it appears in the original caption. Each playback logs
+whether the microphone stayed open, the audio route, and the loudest
+microphone input it heard.
+
 ### Validation CLI: accuracy, language detection, latency, cost
 
 `translator-cli` runs the real session, WebSocket client and translator on
@@ -339,8 +352,10 @@ the mock, because it plays a script whatever audio it receives.
   - Time from caption to first sound.
   - With AirPods connected, speech plays in them.
 
-  The Simulator on the development Mac has no microphone input, so the
-  speaker path (`MicrophoneCapture.play`) has only been compiled, not heard.
+  On an iPhone 13 at about 75% volume, with echo cancellation, the phone
+  doesn't caption its own voice. A reply that starts during loudspeaker
+  playback is captioned, and recognition seemed no worse than with muted
+  playback. Plugging in wired headphones mid-session kept listening.
 
 - [ ] **Accuracy.** Recognition accuracy and language detection across the 27
   sample languages, from the live CLI run.
