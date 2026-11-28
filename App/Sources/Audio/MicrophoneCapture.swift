@@ -34,7 +34,7 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
     private var observers: [any NSObjectProtocol] = []
     private var isInterrupted = false
 
-    init(speakerVoiceProcessing: Bool = false) {
+    init(speakerVoiceProcessing: Bool = true) {
         self.speakerVoiceProcessing = speakerVoiceProcessing
     }
 
@@ -225,9 +225,13 @@ actor MicrophoneCapture: AudioCapturing, SpeechPlaying {
         if playback != nil { cutPlayback() }
         let tracker = PlaybackTracker()
         playback = tracker
-        gate.updateRoute(allowsListening: PlaybackRoute.allowsListening(voiceProcessingEnabled: graph.voiceProcessingEnabled))
+        let listening = PlaybackRoute.allowsListening(voiceProcessingEnabled: graph.voiceProcessingEnabled)
+        gate.updateRoute(allowsListening: listening)
         gate.startPlayback()
+        _ = converter?.takePeak()
+        Self.log.info("Speaking with mic \(listening ? "open" : "muted", privacy: .public), voice processing: \(graph.voiceProcessingEnabled, privacy: .public), \(PlaybackRoute.summary, privacy: .public)")
         defer {
+            Self.log.info("Finished speaking; loudest mic input: \(self.converter?.takePeak() ?? 0, format: .fixed(precision: 3), privacy: .public)")
             if playback === tracker { cutPlayback() }
         }
 

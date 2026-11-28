@@ -12,6 +12,7 @@ import TranslatorCore
 ///   -AudioSampleIDs es-name-time,ja-phone
 ///   -AutoStart YES
 ///   -SpeaksTranslations YES             speak translations aloud (any build)
+///   -SpeakerVoiceProcessing NO          mute the mic during speaker playback instead
 @MainActor
 struct AppEnvironment {
     let keyStore = APIKeyStore()
@@ -25,10 +26,11 @@ struct AppEnvironment {
     init(defaults: UserDefaults = .standard) {
         #if DEBUG
         let overrides = defaults
-        let speakerVoiceProcessing = defaults.bool(forKey: "SpeakerVoiceProcessing")
+        let speakerVoiceProcessing = defaults.object(forKey: "SpeakerVoiceProcessing") == nil
+            || defaults.bool(forKey: "SpeakerVoiceProcessing")
         #else
         let overrides = UserDefaults(suiteName: "unused-in-release") ?? defaults
-        let speakerVoiceProcessing = false
+        let speakerVoiceProcessing = true
         #endif
 
         baseURL = overrides.string(forKey: "InworldBaseURL").flatMap(URL.init(string:)) ?? URL(string: "https://api.inworld.ai")!

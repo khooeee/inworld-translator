@@ -18,6 +18,7 @@ final class PCMConverter: Sendable {
         let converter: AVAudioConverter
         let output: AVAudioPCMBuffer
         var pending: [Int16] = []
+        var peak: UInt16 = 0
     }
 
     private let state: Mutex<State>
@@ -34,6 +35,14 @@ final class PCMConverter: Sendable {
         state = Mutex(State(converter: converter, output: output))
         self.chunks = chunks
         self.gate = gate
+    }
+
+    /// The loudest microphone sample since the last call, before muting, from 0 to 1.
+    func takePeak() -> Float {
+        state.withLock { state in
+            defer { state.peak = 0 }
+            return Float(state.peak) / Float(Int16.max)
+        }
     }
 
     func convert(_ buffer: AVAudioPCMBuffer) {
@@ -55,10 +64,12 @@ final class PCMConverter: Sendable {
             }
             guard status != .error, let samples = state.output.int16ChannelData?[0] else { return [] }
             let count = Int(state.output.frameLength)
+            let heard = UnsafeBufferPointer(start: samples, count: count)
+            state.peak = max(state.peak, heard.lazy.map(\.magnitude).max() ?? 0)
             if gate.isMuted {
                 state.pending.append(contentsOf: repeatElement(0, count: count))
             } else {
-                state.pending.append(contentsOf: UnsafeBufferPointer(start: samples, count: count))
+                state.pending.append(contentsOf: heard)
             }
 
             var ready: [Data] = []

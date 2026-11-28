@@ -21,4 +21,12 @@ enum PlaybackRoute {
             }
         }
     }
+
+    /// The current input and output ports, for logs.
+    static var summary: String {
+        let route = AVAudioSession.sharedInstance().currentRoute
+        let inputs = route.inputs.map(\.portType.rawValue).joined(separator: ",")
+        let outputs = route.outputs.map(\.portType.rawValue).joined(separator: ",")
+        return "in [\(inputs)] out [\(outputs)]"
+    }
 }
