@@ -352,8 +352,10 @@ the mock, because it plays a script whatever audio it receives.
   - Time from caption to first sound.
   - With AirPods connected, speech plays in them.
 
-  On an iPhone 13 at about 75% volume, a reply that starts during
-  loudspeaker playback is captioned.
+  On an iPhone 13 at about 75% volume, with echo cancellation, the phone
+  doesn't caption its own voice. A reply that starts during loudspeaker
+  playback is captioned, and recognition seemed no worse than with muted
+  playback. Plugging in wired headphones mid-session kept listening.
 
 - [ ] **Accuracy.** Recognition accuracy and language detection across the 27
   sample languages, from the live CLI run.
